@@ -4,6 +4,7 @@ import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import { ERRORS, type ErrorDefinition, type RequestId } from 'tula-closeline-contract'
 import { isAppError, toErrorBody } from 'tula-closeline-kit'
 import { type Container, reportSafely } from '~/container'
+import { RetryAfterError } from '~/http/domain-error'
 import { REQUEST_ID_HEADER } from '~/http/request-id'
 import type { AppEnv } from '~/http/types'
 
@@ -66,6 +67,7 @@ export function createErrorHandler(container: Container): ErrorHandler<AppEnv> {
   const report = (error: unknown, c: Context<AppEnv>, status: number): void =>
     reportSafely(container, error, {
       requestId: c.get('requestId'),
+      organizationId: c.get('organizationId'),
       method: c.req.method,
       path: c.req.path,
       status,
@@ -78,6 +80,9 @@ export function createErrorHandler(container: Container): ErrorHandler<AppEnv> {
 
   return (error, c) => {
     if (isAppError(error)) {
+      if (error instanceof RetryAfterError) {
+        c.header('retry-after', String(error.retryAfterSeconds))
+      }
       if (!isErrorStatus(error.status)) {
         return internal(error, c)
       }

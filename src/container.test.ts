@@ -2,6 +2,11 @@ import { expect, test } from 'bun:test'
 import { createContainer, reportSafely } from './container'
 import { loadEnv } from './env'
 
+/** The log lines of reported errors; the container also logs its own boot lines. */
+function reportedLines(lines: string[]): string[] {
+  return lines.filter((line) => line.includes('unhandled error'))
+}
+
 test('the default reportError logs the failure with its request context at error level', () => {
   const lines: string[] = []
   const container = createContainer(loadEnv({ ENVIRONMENT: 'local' }), {
@@ -16,8 +21,8 @@ test('the default reportError logs the failure with its request context at error
     status: 500,
   })
 
-  expect(lines).toHaveLength(1)
-  expect(JSON.parse(lines[0] ?? '{}')).toMatchObject({
+  expect(reportedLines(lines)).toHaveLength(1)
+  expect(JSON.parse(reportedLines(lines)[0] ?? '{}')).toMatchObject({
     level: 50, // error
     msg: 'unhandled error',
     requestId,
@@ -38,7 +43,7 @@ test('the default reportError logs the stack frames and the whole cause chain', 
 
   container.reportError(error, { requestId, method: 'GET', path: '/x', status: 500 })
 
-  const logged = JSON.parse(lines[0] ?? '{}')
+  const logged = JSON.parse(reportedLines(lines)[0] ?? '{}')
   expect(logged.error.stack.length).toBeGreaterThan(0)
   expect(logged.error.cause).toMatchObject({ name: 'TypeError', message: 'socket closed' })
 })
@@ -57,7 +62,7 @@ test('the default reportError bounds a long message', () => {
     status: 500,
   })
 
-  expect((lines[0] ?? '').length).toBeLessThan(5_000)
+  expect((reportedLines(lines)[0] ?? '').length).toBeLessThan(5_000)
 })
 
 test('reportSafely swallows a reporter that throws or rejects', async () => {
@@ -98,7 +103,7 @@ test('the default reportError records a thrown non-Error without its value', () 
 
   container.reportError('password=hunter2', { requestId, method: 'GET', path: '/x', status: 500 })
 
-  expect(lines[0]).not.toContain('hunter2')
+  expect(reportedLines(lines)[0]).not.toContain('hunter2')
 })
 
 test('LOG_LEVEL silences the logger', () => {
@@ -112,6 +117,19 @@ test('LOG_LEVEL silences the logger', () => {
   expect(lines).toHaveLength(0)
 })
 
-test('a container built from the environment has no readiness checks yet', () => {
-  expect(createContainer(loadEnv({ ENVIRONMENT: 'local' })).readinessChecks).toEqual([])
+test('a container built from the environment checks the database for readiness', async () => {
+  const container = createContainer(loadEnv({ ENVIRONMENT: 'local', LOG_LEVEL: 'silent' }))
+
+  expect(container.readinessChecks.map((check) => check.name)).toEqual(['database'])
+  await container.close()
+})
+
+test('the container wires the enrichment module to the queue and the limits of the environment', async () => {
+  const container = createContainer(
+    loadEnv({ ENVIRONMENT: 'local', LOG_LEVEL: 'silent', ENRICHMENT_RUN_CEILING_MICROS: '123' })
+  )
+
+  expect(container.enrichment.limits.runCeilingMicros).toBe(123)
+  expect(container.enrichment.queue).toBe(container.queue)
+  await container.close()
 })

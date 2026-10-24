@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { createFixedClock } from 'tula-closeline-kit'
 import { createApp } from './app'
-import { drain, type Stoppable, shutdown } from './shutdown'
+import { drain, type Stoppable, shutdown, stoppableWith } from './shutdown'
 import { createTestDeps } from './testing'
 
 function fakeServer(finishesAfterMs: number | null) {
@@ -149,4 +149,21 @@ test.each([
   })
 
   expect(exits).toEqual([level === 'error' ? 1 : 0])
+})
+
+test('stoppableWith stops the server and the consumer, and a forced stop gives the consumer no time', async () => {
+  const server = fakeServer(0)
+  const deadlines: number[] = []
+  const consumer = {
+    stop: async (deadlineMs: number) => {
+      deadlines.push(deadlineMs)
+    },
+  }
+  const stoppable = stoppableWith(server, consumer, 5_000)
+
+  await stoppable.stop()
+  await stoppable.stop(true)
+
+  expect(server.calls).toEqual([undefined, true])
+  expect(deadlines).toEqual([5_000, 0])
 })

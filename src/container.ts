@@ -1,14 +1,35 @@
+import { sql } from 'drizzle-orm'
 import type { RequestId } from 'tula-closeline-contract'
+import { createDb, type Transaction, withOrganization } from 'tula-closeline-db'
 import {
   type Clock,
+  createErrorReporter,
   createLogger,
+  createMemoryProcessedStore,
+  createRemoteKeySet,
+  createTokenVerifier,
   type LogDestination,
   type Logger,
+  type ProcessedStore,
+  type Queue,
   systemClock,
+  systemSleep,
+  type TokenVerifier,
 } from 'tula-closeline-kit'
+import { type Consumer, createSqsQueue } from 'tula-closeline-kit/queue'
+import { createMemoryQueue } from 'tula-closeline-kit/testing'
+import { createMemoryCore } from '~/adapters/memory/core'
+import { createPostgresProviderConfig } from '~/adapters/postgres/provider-config'
+import { createPostgresEnrichmentStore } from '~/adapters/postgres/store'
+import { createOutboundConsumer } from '~/consumer'
 import { describeError } from '~/describe-error'
 import { type Env, loadEnv } from '~/env'
 import { SERVICE } from '~/info'
+import { type OutboundEnvelope, registry } from '~/messages'
+import type { EnrichmentDeps } from '~/modules/enrichment/deps'
+import { enrichmentHandlers } from '~/modules/enrichment/handlers'
+import type { CredentialVault } from '~/ports/provider-config'
+import { trackerSafe } from '~/tracker-safe'
 
 /** One dependency probe for `/readyz`: resolve when healthy, reject or stall when not. */
 export type ReadinessCheck = {
@@ -21,6 +42,8 @@ export type ReadinessCheck = {
 /** What `reportError` is told about the request that failed. */
 export type ErrorContext = {
   requestId: RequestId
+  /** The Organization of the verified token, when the request got that far. */
+  organizationId?: string | undefined
   method: string
   /** The path only, never the query string, which can carry secrets. */
   path: string
@@ -33,7 +56,19 @@ export type Container = {
   env: Env
   logger: Logger
   clock: Clock
-  /** Probes run by `/readyz`; empty until the service gains a dependency. */
+  /** Checks access tokens offline against the auth service's published keys. */
+  tokenVerifier: TokenVerifier
+  /** Runs `fn` in a transaction scoped to one Organization; no bare connection is handed out. */
+  withOrganization: <T>(organizationId: string, fn: (tx: Transaction) => Promise<T>) => Promise<T>
+  /** The enrichment queue: SQS when `QUEUE_URL` is set, otherwise in memory (local and tests only). */
+  queue: Queue<OutboundEnvelope>
+  /** Which queue messages are done. In memory: the run row is the idempotency record, see ADR notes. */
+  processed: ProcessedStore
+  /** Everything the enrichment module needs; its service functions take this first. */
+  enrichment: EnrichmentDeps
+  /** The queue consumer; built here, started by `server.ts` and stopped on shutdown. */
+  consumer: Consumer
+  /** Probes run by `/readyz`: the database. */
   readinessChecks: readonly ReadinessCheck[]
   /**
    * The one place unexpected errors go. It logs through the kit logger today; the error tracker is
@@ -45,6 +80,8 @@ export type Container = {
    * `drainingSince` is when the first signal arrived (epoch ms from `clock`), for shutdown only.
    */
   lifecycle: { draining: boolean; drainingSince?: number }
+  /** Delivers pending error reports and releases the database connections; safe to call twice. */
+  close: () => Promise<void>
 }
 
 /**
@@ -68,22 +105,125 @@ export type ContainerOptions = {
   logDestination?: LogDestination
 }
 
-/** The single composition root: the only place adapters and process-wide objects are constructed. */
+/** How long `close` waits for the error reporter to deliver what it holds. */
+const REPORTER_CLOSE_MS = 2_000
+
+/** The SQS queue when `QUEUE_URL` is set, otherwise the kit's memory queue. */
+function createQueue(env: Env): Queue<OutboundEnvelope> {
+  if (env.QUEUE_URL === undefined) {
+    return createMemoryQueue({ registry, clock: systemClock })
+  }
+  return createSqsQueue({
+    queueUrl: env.QUEUE_URL,
+    region: env.AWS_REGION,
+    environment: env.ENVIRONMENT,
+    registry,
+    ...(env.QUEUE_ENDPOINT === undefined ? {} : { endpoint: env.QUEUE_ENDPOINT }),
+  })
+}
+
+/** No key management exists yet (ADR pending), so no credential opens and every provider is skipped. */
+const unconfiguredVault: CredentialVault = { open: async () => null }
+
+/**
+ * The single composition root: the only place adapters and process-wide objects are constructed.
+ * Core and the providers are memory adapters until the HTTP adapter and vendor adapters exist, so
+ * outside `local` the service warns that enrichment is not wired to real ones.
+ */
 export function createContainer(env: Env = loadEnv(), options: ContainerOptions = {}): Container {
   const logger = createLogger({
     service: SERVICE,
     level: env.LOG_LEVEL,
     ...(options.logDestination ? { destination: options.logDestination } : {}),
   })
+  const errors = trackerSafe(
+    createErrorReporter({
+      dsn: env.SENTRY_DSN,
+      service: SERVICE,
+      environment: env.ENVIRONMENT,
+      region: env.REGION,
+      release: env.GIT_SHA,
+      logger,
+    })
+  )
+  const database = createDb(env.DATABASE_URL)
+  const keys = createRemoteKeySet({
+    url: env.AUTH_JWKS_URL,
+    allowInsecureLocalhost: env.ENVIRONMENT === 'local',
+    clock: systemClock,
+    logger,
+  })
+  if (env.ENVIRONMENT !== 'local') {
+    logger.warn('ports still on fakes', {
+      ports: ['core', 'enrichment providers', 'email verifiers'],
+    })
+  }
+  const inOrganization: Container['withOrganization'] = (organizationId, fn) =>
+    withOrganization(database.db, organizationId, fn)
+  const queue = createQueue(env)
+  const processed = createMemoryProcessedStore({ clock: systemClock })
+  const core = createMemoryCore()
+  const enrichment: EnrichmentDeps = {
+    store: createPostgresEnrichmentStore(inOrganization),
+    core: core.prospects,
+    access: core.access,
+    config: createPostgresProviderConfig(inOrganization, unconfiguredVault),
+    providers: [],
+    verifiers: [],
+    queue,
+    clock: systemClock,
+    sleep: systemSleep,
+    random: Math.random,
+    logger,
+    limits: {
+      monthlyBudgetMicros: env.ENRICHMENT_MONTHLY_BUDGET_MICROS,
+      runCeilingMicros: env.ENRICHMENT_RUN_CEILING_MICROS,
+      providerTimeoutMs: env.ENRICHMENT_PROVIDER_TIMEOUT_MS,
+      providerMaxTries: env.ENRICHMENT_PROVIDER_MAX_TRIES,
+      retryBaseMs: env.ENRICHMENT_RETRY_BASE_MS,
+      runLeaseSeconds: env.ENRICHMENT_RUN_LEASE_SECONDS,
+    },
+  }
+  const consumer = createOutboundConsumer({
+    queue,
+    store: processed,
+    logger,
+    errorReporter: errors,
+    handlers: enrichmentHandlers(enrichment),
+    concurrency: env.CONSUMER_CONCURRENCY,
+  })
 
   return {
     env,
     logger,
     clock: systemClock,
-    readinessChecks: [],
+    tokenVerifier: createTokenVerifier({
+      issuer: env.AUTH_ISSUER,
+      audience: env.AUTH_AUDIENCE,
+      keys,
+      clock: systemClock,
+    }),
+    withOrganization: inOrganization,
+    queue,
+    processed,
+    enrichment,
+    consumer,
+    readinessChecks: [
+      {
+        name: 'database',
+        run: async () => {
+          await database.db.execute(sql`select 1`)
+        },
+      },
+    ],
     lifecycle: { draining: false },
     reportError: (error, context) => {
       logger.error('unhandled error', { ...context, error: describeError(error) })
+      errors.capture(error, context)
+    },
+    close: async () => {
+      await errors.close(REPORTER_CLOSE_MS)
+      await database.close()
     },
   }
 }
