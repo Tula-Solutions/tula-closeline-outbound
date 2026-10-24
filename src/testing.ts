@@ -101,6 +101,8 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     AUTH_AUDIENCE: TEST_AUDIENCE,
     AWS_REGION: 'us-east-1',
     QUEUE_URL: 'https://sqs.test/000000000000/outbound',
+    CORE_URL: 'https://core.test',
+    CORE_INTERNAL_SECRET: 'testing-shared-secret-0123456789-abcdefg',
     ...overrides.env,
   })
   const queue = createMemoryQueue({ registry, clock: time.clock, sleep: time.sleep })

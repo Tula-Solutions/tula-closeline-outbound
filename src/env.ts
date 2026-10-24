@@ -24,6 +24,8 @@ const REQUIRED_OUTSIDE_LOCAL = [
   'AUTH_AUDIENCE',
   'AWS_REGION',
   'QUEUE_URL',
+  'CORE_URL',
+  'CORE_INTERNAL_SECRET',
 ] as const
 
 /**
@@ -37,6 +39,9 @@ function integer(min: number, max: number) {
     .transform(Number)
     .pipe(z.number().min(min).max(max))
 }
+
+/** The shortest shared secret core accepts, in characters (core's own floor). */
+const MIN_INTERNAL_SECRET_LENGTH = 32
 
 /** The most grace plus drain may add up to, so an orchestrator's kill window is not outlasted. */
 const MAX_SHUTDOWN_TOTAL_MS = 60_000
@@ -101,6 +106,20 @@ const schema = z
     ENRICHMENT_RETRY_BASE_MS: integer(1, 60_000).default(200),
     /** How long a run stays claimed by one worker before another may take it over, in seconds. */
     ENRICHMENT_RUN_LEASE_SECONDS: integer(5, 3_600).default(120),
+
+    /** Core's origin for the enrichment read and write-back. Unset in `local` means in-memory core; required elsewhere. */
+    CORE_URL: z.url().max(2_048).optional(),
+    /** The shared secret core accepts from this service (ADR 0013), sent as a bearer. Never log it. */
+    CORE_INTERNAL_SECRET: z
+      .string()
+      .min(MIN_INTERNAL_SECRET_LENGTH, `must be at least ${MIN_INTERNAL_SECRET_LENGTH} characters`)
+      .max(512)
+      .regex(/^[\x21-\x7e]+$/, 'must be printable ASCII with no space')
+      .optional(),
+    /** The longest one call to core may take, in ms. */
+    CORE_CALL_TIMEOUT_MS: integer(100, 60_000).default(5_000),
+    /** The most times one call to core is tried (the first included) on a network error or 503. */
+    CORE_CALL_MAX_TRIES: integer(1, 5).default(3),
   })
   .refine((env) => env.SHUTDOWN_GRACE_MS + env.SHUTDOWN_TIMEOUT_MS <= MAX_SHUTDOWN_TOTAL_MS, {
     message: `SHUTDOWN_GRACE_MS plus SHUTDOWN_TIMEOUT_MS must not exceed ${MAX_SHUTDOWN_TOTAL_MS} ms in total`,
@@ -126,6 +145,13 @@ const schema = z
           message: 'QUEUE_ENDPOINT is accepted only when ENVIRONMENT is local',
         })
       }
+    }
+    if (env.CORE_URL !== undefined && env.CORE_INTERNAL_SECRET === undefined) {
+      context.addIssue({
+        code: 'custom',
+        path: ['CORE_INTERNAL_SECRET'],
+        message: 'CORE_INTERNAL_SECRET is required when CORE_URL is set',
+      })
     }
     if (env.QUEUE_ENDPOINT !== undefined && env.QUEUE_URL === undefined) {
       context.addIssue({

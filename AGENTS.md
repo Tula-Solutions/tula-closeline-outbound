@@ -44,7 +44,10 @@ The shape in `.claude/COMMON.md` is built; add modules under `src/modules/<name>
 ## Env keys (`src/env.ts`, mirrored in `.env.example`)
 
 `ENVIRONMENT` (required, no default), `PORT`, `LOG_LEVEL`, `READINESS_TIMEOUT_MS`,
-`SHUTDOWN_TIMEOUT_MS`, `SHUTDOWN_GRACE_MS`, `MAX_REQUEST_BODY_BYTES`. Add a key in both files.
+`SHUTDOWN_TIMEOUT_MS`, `SHUTDOWN_GRACE_MS`, `MAX_REQUEST_BODY_BYTES`, `CORE_URL`,
+`CORE_INTERNAL_SECRET` (core's Prospect read and write-back go over HTTP when `CORE_URL` is set or
+outside `local`; the adapter is `src/adapters/http/core.ts`), `CORE_CALL_TIMEOUT_MS`,
+`CORE_CALL_MAX_TRIES`. Add a key in both files.
 
 ## Hot paths
 

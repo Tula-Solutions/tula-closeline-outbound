@@ -34,12 +34,20 @@ export type CoreProspects = {
     organizationId: OrganizationId,
     prospectId: ProspectId
   ) => Promise<EnrichmentInput | null>
-  /** Writes fields with source `enrichment:<provider>`; idempotent on (Prospect, run id). */
+  /** Writes fields with source `enrichment:<provider>`; idempotent on (Prospect, run id). Throws {@link CoreProspectNotFoundError} when core has no such Prospect. */
   writeEnrichedFields: (
     organizationId: OrganizationId,
     prospectId: ProspectId,
     write: { runId: string; fields: readonly EnrichedFieldWrite[] }
   ) => Promise<{ results: { field: EnrichedFieldName; application: FieldApplication }[] }>
+}
+
+/** Core does not know the Prospect in this Organization: terminal for that Prospect, never retried. */
+export class CoreProspectNotFoundError extends Error {
+  constructor() {
+    super('core: enrichment.prospect_not_found')
+    this.name = 'CoreProspectNotFoundError'
+  }
 }
 
 /** The caller of a request, as access to a Prospect is judged. */

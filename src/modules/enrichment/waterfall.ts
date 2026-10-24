@@ -11,7 +11,7 @@ import {
   VERIFICATION_REASONS,
   VERIFICATION_STATUSES,
 } from 'tula-closeline-contract'
-import type { EnrichedFieldWrite } from '~/ports/core'
+import { CoreProspectNotFoundError, type EnrichedFieldWrite } from '~/ports/core'
 import {
   type EmailVerifier,
   type EnrichmentProvider,
@@ -574,6 +574,7 @@ async function executeClaimed(
     }
   }
 
+  let prospectGone = false
   const applications: { field: EnrichedFieldName; application: Provenance['application'] }[] = []
   if (state.fields.length > 0) {
     const writes: EnrichedFieldWrite[] = state.fields.map((field) => ({
@@ -584,13 +585,22 @@ async function executeClaimed(
       obtainedAt: field.obtainedAt,
     }))
     state.lease = await deps.store.renewLease(organizationId, runId, state.lease, deps.clock.now())
-    const answer = await deps.core.writeEnrichedFields(organizationId, run.prospectId, {
-      runId,
-      fields: writes,
-    })
-    applications.push(...answer.results)
+    try {
+      const answer = await deps.core.writeEnrichedFields(organizationId, run.prospectId, {
+        runId,
+        fields: writes,
+      })
+      applications.push(...answer.results)
+    } catch (error) {
+      // The Prospect is gone from core: nothing to write to, and a retry would meet the same answer.
+      if (!(error instanceof CoreProspectNotFoundError)) {
+        throw error
+      }
+      // Nothing was applied, so the run cannot be complete; a stop reason still survives.
+      prospectGone = true
+    }
   }
-  const complete = run.groups.every((group) => state.satisfied.has(group))
+  const complete = !prospectGone && run.groups.every((group) => state.satisfied.has(group))
   await deps.store.finish(organizationId, runId, state.lease, {
     status: state.stop !== null ? 'stopped' : complete ? 'complete' : 'incomplete',
     stopReason: state.stop,
