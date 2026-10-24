@@ -8,6 +8,7 @@ import {
   type ProviderKey,
 } from 'tula-closeline-contract'
 import { createMemoryProvider, createMemoryVerifier } from '~/adapters/memory/providers'
+import * as Waterfall from '~/modules/enrichment/waterfall'
 import { ProviderError } from '~/ports/enrichment-provider'
 import type { ProviderSetting } from '~/ports/provider-config'
 import {
@@ -713,9 +714,19 @@ describe('resuming a run', () => {
       throw new Error('no run')
     }
     // The state a crash leaves: the skip is recorded, the run was never finished.
+    const claimed = await w.t.deps.store.claim(
+      w.organizationId,
+      queued.id,
+      w.t.deps.clock.now(),
+      120
+    )
+    if (claimed.kind !== 'claimed') {
+      throw new Error('not claimed')
+    }
     await w.t.deps.store.recordAttempt(
       w.organizationId,
       queued.id,
+      claimed.lease,
       {
         provider: key('alpha'),
         group: 'person',
@@ -728,6 +739,7 @@ describe('resuming a run', () => {
       },
       []
     )
+    w.t.deps.time.advance(121_000)
 
     await w.drain()
     const run = await w.run(queued.id)
@@ -758,5 +770,224 @@ describe('idempotency across callers', () => {
     expect(codeOf(second.body)).toBe('request.idempotency_key_reused')
     const replayByFirst = await w.post(body, 'shared-key-00000001')
     expect(replayByFirst.status).toBe(200)
+  })
+})
+
+/** The first instant of the month after the current virtual time, in milliseconds. */
+function nextMonthStart(now: Date): number {
+  return Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)
+}
+
+describe('the budget reservation', () => {
+  test('a reservation left by a crash is taken back when the run is claimed again', async () => {
+    const provider = createMemoryProvider({ key: key('alpha'), groups: ['person'] })
+    const w = await world({ providers: [provider], settings: [setting('alpha', 1)] })
+    const created = await w.post({ prospectIds: [w.prospectId], groups: ['person'] })
+    const [run] = await w.runsOf((created.body as { id: string }).id)
+    if (run === undefined) {
+      throw new Error('no run')
+    }
+    const store = w.t.deps.store
+    const deps = w.t.deps.enrichment
+    const month = Waterfall.monthOf(w.t.deps.clock.now())
+    // The process dies after reserving and before recording: nothing runs after that point.
+    const realRecord = store.recordAttempt.bind(store)
+    let crashed = false
+    store.recordAttempt = async (...args) => {
+      if (!crashed) {
+        crashed = true
+        throw new Error('process died')
+      }
+      return realRecord(...args)
+    }
+    store.releaseSpend = async () => {}
+    await expect(Waterfall.execute(deps, w.organizationId, run.id)).rejects.toThrow()
+    expect(await store.monthSpend(w.organizationId, month)).toBe(10_000)
+
+    await w.t.deps.time.advance((deps.limits.runLeaseSeconds + 1) * 1000)
+    await Waterfall.execute(deps, w.organizationId, run.id)
+
+    expect((await w.run(run.id)).status).toBe('complete')
+    expect(await store.monthSpend(w.organizationId, month)).toBe(10_000)
+  })
+
+  test('a reservation of a run nobody resumes expires and stops counting against the month', async () => {
+    const provider = createMemoryProvider({ key: key('alpha'), groups: ['person'] })
+    const w = await world({
+      providers: [provider],
+      settings: [setting('alpha', 1)],
+      budget: '15000',
+    })
+    const other = newProspectId()
+    w.t.deps.core.seed(w.organizationId, { id: other, ownerId: w.owner.userId, values: {} })
+    const first = await w.post({ prospectIds: [w.prospectId], groups: ['person'] })
+    const second = await w.post({ prospectIds: [other], groups: ['person'] })
+    const [lost] = await w.runsOf((first.body as { id: string }).id)
+    const [next] = await w.runsOf((second.body as { id: string }).id)
+    if (lost === undefined || next === undefined) {
+      throw new Error('no run')
+    }
+    const store = w.t.deps.store
+    const deps = w.t.deps.enrichment
+    const realRecord = store.recordAttempt
+    const realRelease = store.releaseSpend
+    store.recordAttempt = async () => {
+      throw new Error('process died')
+    }
+    store.releaseSpend = async () => {}
+    await expect(Waterfall.execute(deps, w.organizationId, lost.id)).rejects.toThrow()
+    store.recordAttempt = realRecord
+    store.releaseSpend = realRelease
+    await w.t.deps.time.advance((deps.limits.runLeaseSeconds + 1) * 1000)
+
+    await Waterfall.execute(deps, w.organizationId, next.id)
+
+    expect((await w.run(next.id)).status).toBe('complete')
+  })
+
+  test('a release after the month changed is charged back to the month it was reserved in', async () => {
+    const provider = createMemoryProvider({
+      key: key('alpha'),
+      groups: ['person'],
+      respond: async () => {
+        throw new ProviderError('key_rejected')
+      },
+    })
+    const w = await world({ providers: [provider], settings: [setting('alpha', 1)] })
+    const clock = w.t.deps.clock
+    await w.t.deps.time.advance(nextMonthStart(clock.now()) - 1_000 - clock.now().getTime())
+    const march = Waterfall.monthOf(clock.now())
+    const store = w.t.deps.store
+    const realReserve = store.reserveSpend.bind(store)
+    store.reserveSpend = async (...args) => {
+      const reserved = await realReserve(...args)
+      await w.t.deps.time.advance(2_000)
+      return reserved
+    }
+
+    await enrichOne(w, { prospectIds: [w.prospectId], groups: ['person'] })
+
+    const april = Waterfall.monthOf(clock.now())
+    expect(april).not.toBe(march)
+    expect(await store.monthSpend(w.organizationId, march)).toBe(0)
+    expect(await store.monthSpend(w.organizationId, april)).toBe(0)
+  })
+})
+
+describe('the run lease', () => {
+  test('a worker that lost its lease cannot record or finish; the run keeps the new holder result', async () => {
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const provider = createMemoryProvider({
+      key: key('alpha'),
+      groups: ['person'],
+      respond: async (request, call) => {
+        if (call === 1) {
+          await gate
+        }
+        return request.wanted.map((field) => ({ field, value: `v-${call}`, confidence: 90 }))
+      },
+    })
+    const w = await world({ providers: [provider], settings: [setting('alpha', 1)] })
+    const created = await w.post({ prospectIds: [w.prospectId], groups: ['person'] })
+    const [run] = await w.runsOf((created.body as { id: string }).id)
+    if (run === undefined) {
+      throw new Error('no run')
+    }
+    const deps = w.t.deps.enrichment
+    const slow = Waterfall.execute(deps, w.organizationId, run.id)
+    await w.t.deps.time.advance((deps.limits.runLeaseSeconds + 1) * 1000)
+    await Waterfall.execute(deps, w.organizationId, run.id)
+    const done = await w.run(run.id)
+    expect(done.status).toBe('complete')
+
+    release()
+    await expect(slow).resolves.toBeUndefined()
+
+    const after = await w.run(run.id)
+    expect(after.attempts).toHaveLength(1)
+    expect(after.costMicros).toBe(10_000)
+    expect(after.fields.every((field) => field.value === 'v-2')).toBe(true)
+    expect(w.t.deps.core.writeCalls()).toBe(1)
+    const month = Waterfall.monthOf(w.t.deps.clock.now())
+    expect(await w.t.deps.store.monthSpend(w.organizationId, month)).toBe(10_000)
+  })
+
+  test('the lease is renewed between provider calls, so a long run is not taken from its worker', async () => {
+    const claims: string[] = []
+    const w0 = await world()
+    const lease = w0.t.deps.enrichment.limits.runLeaseSeconds
+    const slow = (name: string) =>
+      createMemoryProvider({
+        key: key(name),
+        groups: ['person'],
+        respond: async () => {
+          await w.t.deps.time.advance(((lease * 5) / 6) * 1000)
+          const taken = await w.t.deps.store.claim(
+            w.organizationId,
+            runId,
+            w.t.deps.clock.now(),
+            lease
+          )
+          claims.push(taken.kind)
+          return []
+        },
+      })
+    const w = await world({
+      providers: [slow('alpha'), slow('beta'), slow('gamma')],
+      settings: [setting('alpha', 1), setting('beta', 2), setting('gamma', 3)],
+    })
+    const created = await w.post({ prospectIds: [w.prospectId], groups: ['person'] })
+    const [run] = await w.runsOf((created.body as { id: string }).id)
+    if (run === undefined) {
+      throw new Error('no run')
+    }
+    const runId = run.id
+
+    await Waterfall.execute(w.t.deps.enrichment, w.organizationId, runId)
+
+    expect(claims).toEqual(['busy', 'busy', 'busy'])
+  })
+})
+
+describe('one idempotency key, one request', () => {
+  test('concurrent requests with the same key and different Prospects make one run set', async () => {
+    const provider = createMemoryProvider({ key: key('alpha'), groups: ['person'] })
+    const w = await world({ providers: [provider], settings: [setting('alpha', 1)] })
+    const other = newProspectId()
+    w.t.deps.core.seed(w.organizationId, { id: other, ownerId: w.owner.userId, values: {} })
+
+    const [a, b] = await Promise.all([
+      w.post({ prospectIds: [w.prospectId], groups: ['person'] }, 'shared-key-00000002'),
+      w.post({ prospectIds: [other], groups: ['person'] }, 'shared-key-00000002'),
+    ])
+
+    const statuses = [a.status, b.status].sort()
+    expect(statuses).toEqual([202, 422])
+    const loser = a.status === 422 ? a : b
+    expect(codeOf(loser.body)).toBe('request.idempotency_key_reused')
+    await w.drain()
+    const all = await w.get('/v1/enrichment-runs')
+    expect((all.body.items as unknown[]).length).toBe(1)
+  })
+
+  test('the same key later with other Prospects is refused and makes no runs', async () => {
+    const provider = createMemoryProvider({ key: key('alpha'), groups: ['person'] })
+    const w = await world({ providers: [provider], settings: [setting('alpha', 1)] })
+    const other = newProspectId()
+    w.t.deps.core.seed(w.organizationId, { id: other, ownerId: w.owner.userId, values: {} })
+    await w.post({ prospectIds: [w.prospectId], groups: ['person'] }, 'shared-key-00000003')
+
+    const refused = await w.post(
+      { prospectIds: [other], groups: ['person'] },
+      'shared-key-00000003'
+    )
+
+    expect(refused.status).toBe(422)
+    expect(codeOf(refused.body)).toBe('request.idempotency_key_reused')
+    const all = await w.get('/v1/enrichment-runs')
+    expect((all.body.items as unknown[]).length).toBe(1)
   })
 })

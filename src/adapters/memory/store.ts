@@ -8,18 +8,28 @@ import type {
   ProspectId,
   ProviderKey,
 } from 'tula-closeline-contract'
-import type {
-  Claim,
-  EnrichmentStore,
-  Finish,
-  NewRun,
-  Provenance,
-  RunFilter,
-  RunPage,
-  StoredVerification,
+import {
+  type Claim,
+  type EnrichmentStore,
+  type Finish,
+  type Lease,
+  LeaseLostError,
+  type NewRun,
+  type Provenance,
+  type RunFilter,
+  type RunPage,
+  type StoredVerification,
 } from '~/ports/store'
 
-type Row = { run: EnrichmentRun; requestId: string; claimedAt: number | null }
+type Row = {
+  run: EnrichmentRun
+  requestId: string
+  claimedAt: number | null
+  lease: Lease | null
+}
+
+/** A hold on the budget by one run, with the time it was taken. */
+type Hold = { month: string; priceMicros: number; at: number }
 
 type Spend = { costMicros: number; calls: number }
 
@@ -47,6 +57,25 @@ export function createMemoryEnrichmentStore(): EnrichmentStore & {
 } {
   const rows = new Map<string, Map<string, Row>>()
   const spend = new Map<string, Map<ProviderKey, Spend>>()
+  /** Holds by Organization, then run. */
+  const holds = new Map<string, Map<string, Hold>>()
+
+  const holdsOf = (organizationId: OrganizationId): Map<string, Hold> => {
+    let found = holds.get(organizationId)
+    if (found === undefined) {
+      found = new Map()
+      holds.set(organizationId, found)
+    }
+    return found
+  }
+  /** The row of a run the caller still holds the lease of; otherwise {@link LeaseLostError}. */
+  const held = (organizationId: OrganizationId, runId: string, lease: Lease): Row => {
+    const row = rowsOf(organizationId).get(runId)
+    if (row === undefined || row.run.status !== 'running' || row.lease !== lease) {
+      throw new LeaseLostError()
+    }
+    return row
+  }
 
   const rowsOf = (organizationId: OrganizationId): Map<string, Row> => {
     let found = rows.get(organizationId)
@@ -70,6 +99,11 @@ export function createMemoryEnrichmentStore(): EnrichmentStore & {
     for (const entry of spendOf(organizationId, month).values()) {
       sum += entry.costMicros
     }
+    for (const hold of holdsOf(organizationId).values()) {
+      if (hold.month === month) {
+        sum += hold.priceMicros
+      }
+    }
     return sum
   }
 
@@ -78,6 +112,11 @@ export function createMemoryEnrichmentStore(): EnrichmentStore & {
 
     async createRuns(organizationId, runs: readonly NewRun[]) {
       const own = rowsOf(organizationId)
+      const first = runs[0]
+      // One run set per idempotency key: a second request under the key creates nothing.
+      if (first !== undefined && [...own.values()].some((r) => r.run.runSetId === first.runSetId)) {
+        return 0
+      }
       let created = 0
       for (const input of runs) {
         const clash = [...own.values()].some(
@@ -89,6 +128,7 @@ export function createMemoryEnrichmentStore(): EnrichmentStore & {
         own.set(input.id, {
           requestId: input.requestId,
           claimedAt: null,
+          lease: null,
           run: {
             id: input.id,
             runSetId: input.runSetId,
@@ -140,46 +180,73 @@ export function createMemoryEnrichmentStore(): EnrichmentStore & {
       // Like the Postgres store, where startedAt is also the lease start: the latest claim.
       run.startedAt = now.toISOString()
       row.claimedAt = now.getTime()
-      return { kind: 'claimed', run: copy(run) }
+      row.lease = now.toISOString()
+      // The worker that held the run is fenced out, so whatever it had reserved is dead.
+      holdsOf(organizationId).delete(runId)
+      return { kind: 'claimed', run: copy(run), lease: row.lease }
     },
 
-    async reserveSpend(organizationId, month, provider, priceMicros, limitMicros) {
-      if (total(organizationId, month) + priceMicros > limitMicros) {
-        return false
-      }
-      const entries = spendOf(organizationId, month)
-      const entry = entries.get(provider) ?? { costMicros: 0, calls: 0 }
-      entries.set(provider, {
-        costMicros: entry.costMicros + priceMicros,
-        calls: entry.calls + 1,
-      })
-      return true
+    async renewLease(organizationId, runId, lease, now) {
+      const row = held(organizationId, runId, lease)
+      row.claimedAt = now.getTime()
+      row.lease = now.toISOString()
+      row.run.startedAt = row.lease
+      return row.lease
     },
 
-    async releaseSpend(organizationId, month, provider, priceMicros) {
-      const entries = spendOf(organizationId, month)
-      const entry = entries.get(provider)
-      if (entry !== undefined) {
-        entries.set(provider, {
-          costMicros: Math.max(0, entry.costMicros - priceMicros),
-          calls: Math.max(0, entry.calls - 1),
-        })
+    async reserveSpend(organizationId, request) {
+      held(organizationId, request.runId, request.lease)
+      const month = `${request.now.toISOString().slice(0, 7)}-01`
+      const own = holdsOf(organizationId)
+      for (const [runId, hold] of own) {
+        if (request.now.getTime() >= hold.at + request.holdSeconds * 1000) {
+          own.delete(runId)
+        }
       }
+      own.delete(request.runId)
+      if (total(organizationId, month) + request.priceMicros > request.limitMicros) {
+        return null
+      }
+      own.set(request.runId, { month, priceMicros: request.priceMicros, at: request.now.getTime() })
+      return { month, priceMicros: request.priceMicros }
+    },
+
+    async releaseSpend(organizationId, runId, lease) {
+      try {
+        held(organizationId, runId, lease)
+      } catch (error) {
+        if (error instanceof LeaseLostError) {
+          return
+        }
+        throw error
+      }
+      holdsOf(organizationId).delete(runId)
     },
 
     async recordAttempt(
       organizationId,
       runId,
+      lease,
       attempt: EnrichmentAttempt & { position: number },
       fields: readonly Provenance[],
-      verification?: StoredVerification
+      extra
     ) {
-      const row = rowsOf(organizationId).get(runId)
-      if (row === undefined) {
-        throw new Error('run not found')
-      }
+      const row = held(organizationId, runId, lease)
       if (row.run.attempts.length !== attempt.position) {
         throw new Error('attempt position taken')
+      }
+      const verification: StoredVerification | undefined = extra?.verification
+      const reservation = extra?.reservation
+      if (reservation !== undefined) {
+        holdsOf(organizationId).delete(runId)
+        if (attempt.costMicros > 0) {
+          const entries = spendOf(organizationId, reservation.month)
+          const entry = entries.get(attempt.provider) ?? { costMicros: 0, calls: 0 }
+          entries.set(attempt.provider, {
+            costMicros: entry.costMicros + attempt.costMicros,
+            calls: entry.calls + 1,
+          })
+        }
       }
       const { position: _position, ...stored } = attempt
       row.run.attempts.push(stored)
@@ -190,11 +257,8 @@ export function createMemoryEnrichmentStore(): EnrichmentStore & {
       }
     },
 
-    async finish(organizationId, runId, end: Finish) {
-      const row = rowsOf(organizationId).get(runId)
-      if (row === undefined) {
-        throw new Error('run not found')
-      }
+    async finish(organizationId, runId, lease, end: Finish) {
+      const row = held(organizationId, runId, lease)
       row.run.status = end.status
       row.run.stopReason = end.stopReason
       row.run.emailVerification = end.emailVerification

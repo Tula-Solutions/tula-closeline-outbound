@@ -10,6 +10,7 @@ import { createMemoryProvider } from '~/adapters/memory/providers'
 import { integrationUrls } from '~/integration-support'
 import * as Service from '~/modules/enrichment/service'
 import * as Waterfall from '~/modules/enrichment/waterfall'
+import { LeaseLostError } from '~/ports/store'
 import { createTestDeps, newOrganizationId, newUserId } from '~/testing'
 import { createPostgresEnrichmentStore } from './store'
 
@@ -38,6 +39,39 @@ function newRun(prospectId: ProspectId, requestId: string, userId = newUserId())
 }
 
 const prospect = (): ProspectId => formatId('prs', crypto.randomUUID())
+
+/** Creates a run and claims it at NOW; resolves to the run and its lease. */
+async function claimedRun(org: OrganizationId, requestId: string) {
+  const run = newRun(prospect(), requestId)
+  await store.createRuns(org, [run])
+  const claim = await store.claim(org, run.id, NOW, 120)
+  if (claim.kind !== 'claimed') {
+    throw new Error('not claimed')
+  }
+  return { run, lease: claim.lease }
+}
+
+/** A reservation request for a run at NOW. */
+function reserve(
+  run: { id: ReturnType<typeof newRun>['id'] },
+  lease: string,
+  priceMicros: number,
+  limitMicros: number,
+  now = NOW
+) {
+  return { runId: run.id, lease, provider: alpha, priceMicros, limitMicros, now, holdSeconds: 120 }
+}
+
+const attemptOf = (costMicros: number) => ({
+  provider: alpha,
+  group: 'person' as const,
+  outcome: 'filled' as const,
+  failure: null,
+  costMicros,
+  startedAt: NOW.toISOString(),
+  durationMs: 1,
+  position: 0,
+})
 
 describe('the Postgres enrichment store', () => {
   test('a run is unique per Prospect and request id: a replay creates nothing', async () => {
@@ -78,15 +112,119 @@ describe('the Postgres enrichment store', () => {
 
   test('concurrent reservations never pass the monthly limit', async () => {
     const org = newOrganizationId()
-
-    const results = await Promise.all(
-      Array.from({ length: 10 }, () => store.reserveSpend(org, MONTH, alpha, 10_000, 35_000))
+    const claimed = await Promise.all(
+      Array.from({ length: 10 }, (_, i) => claimedRun(org, `req-limit-${i}`))
     )
 
-    expect(results.filter(Boolean)).toHaveLength(3)
+    const results = await Promise.all(
+      claimed.map(({ run, lease }) => store.reserveSpend(org, reserve(run, lease, 10_000, 35_000)))
+    )
+
+    expect(results.filter((r) => r !== null)).toHaveLength(3)
     expect(await store.monthSpend(org, MONTH)).toBe(30_000)
-    await store.releaseSpend(org, MONTH, alpha, 10_000)
+    const winner = claimed[results.findIndex((r) => r !== null)]
+    const reservation = results.find((r) => r !== null)
+    if (winner === undefined || reservation === undefined || reservation === null) {
+      throw new Error('no winner')
+    }
+    await store.releaseSpend(org, winner.run.id, winner.lease, reservation)
     expect(await store.monthSpend(org, MONTH)).toBe(20_000)
+  })
+
+  test('recording an attempt turns the hold into spend in one step', async () => {
+    const org = newOrganizationId()
+    const { run, lease } = await claimedRun(org, 'req-settle')
+    const reservation = await store.reserveSpend(org, reserve(run, lease, 10_000, 1_000_000))
+    if (reservation === null) {
+      throw new Error('refused')
+    }
+
+    await store.recordAttempt(org, run.id, lease, attemptOf(7_000), [], { reservation })
+
+    expect(await store.monthSpend(org, MONTH)).toBe(7_000)
+  })
+
+  test('a hold a dead worker left expires, and claiming the run again drops it', async () => {
+    const org = newOrganizationId()
+    const crashed = await claimedRun(org, 'req-crash-1')
+    await store.reserveSpend(org, reserve(crashed.run, crashed.lease, 10_000, 15_000))
+    const other = await claimedRun(org, 'req-crash-2')
+    expect(
+      await store.reserveSpend(org, reserve(other.run, other.lease, 10_000, 15_000))
+    ).toBeNull()
+
+    const later = new Date(NOW.getTime() + 121_000)
+    const retaken = await store.reserveSpend(
+      org,
+      reserve(other.run, other.lease, 10_000, 15_000, later)
+    )
+
+    expect(retaken).not.toBeNull()
+    expect(await store.monthSpend(org, MONTH)).toBe(10_000)
+    const again = await store.claim(org, crashed.run.id, later, 120)
+    expect(again.kind).toBe('claimed')
+    expect(await store.monthSpend(org, MONTH)).toBe(10_000)
+  })
+
+  test('a release after the month changed goes back to the month it was reserved in', async () => {
+    const org = newOrganizationId()
+    const { run, lease } = await claimedRun(org, 'req-month')
+    const reservation = await store.reserveSpend(org, reserve(run, lease, 10_000, 1_000_000))
+    if (reservation === null) {
+      throw new Error('refused')
+    }
+
+    await store.releaseSpend(org, run.id, lease, reservation)
+
+    expect(reservation.month).toBe(MONTH)
+    expect(await store.monthSpend(org, MONTH)).toBe(0)
+    expect(await store.monthSpend(org, '2026-04-01')).toBe(0)
+  })
+
+  test('a worker that lost its lease cannot reserve, record, renew or finish', async () => {
+    const org = newOrganizationId()
+    const { run, lease } = await claimedRun(org, 'req-fence')
+    const later = new Date(NOW.getTime() + 121_000)
+    const second = await store.claim(org, run.id, later, 120)
+    if (second.kind !== 'claimed') {
+      throw new Error('not claimed')
+    }
+
+    await expect(store.reserveSpend(org, reserve(run, lease, 1, 100))).rejects.toBeInstanceOf(
+      LeaseLostError
+    )
+    await expect(store.recordAttempt(org, run.id, lease, attemptOf(0), [])).rejects.toBeInstanceOf(
+      LeaseLostError
+    )
+    await expect(store.renewLease(org, run.id, lease, later)).rejects.toBeInstanceOf(LeaseLostError)
+    await expect(
+      store.finish(org, run.id, lease, {
+        status: 'complete',
+        stopReason: null,
+        emailVerification: null,
+        applications: [],
+        completedAt: later,
+      })
+    ).rejects.toBeInstanceOf(LeaseLostError)
+    const renewed = await store.renewLease(org, run.id, second.lease, later)
+    expect(renewed).not.toBe(lease)
+  })
+
+  test('concurrent requests under one key with different Prospects create one run set', async () => {
+    const org = newOrganizationId()
+    const runSetId = formatId('erset', crypto.randomUUID())
+    const batch = (requestId: string) => [
+      { ...newRun(prospect(), requestId), runSetId },
+      { ...newRun(prospect(), requestId), runSetId },
+    ]
+
+    const created = await Promise.all(
+      Array.from({ length: 6 }, () => store.createRuns(org, batch('req-same-key')))
+    )
+
+    expect(created.filter((n) => n === 2)).toHaveLength(1)
+    expect(created.filter((n) => n === 0)).toHaveLength(5)
+    expect((await store.getRunSet(org, runSetId))?.total).toBe(2)
   })
 
   test('the runs and the spend of one Organization are invisible to another', async () => {
@@ -94,7 +232,8 @@ describe('the Postgres enrichment store', () => {
     const orgB = newOrganizationId()
     const run = newRun(prospect(), 'req-iso')
     await store.createRuns(orgA, [run])
-    await store.reserveSpend(orgA, MONTH, alpha, 5_000, 1_000_000)
+    const own = await claimedRun(orgA, 'req-iso-spend')
+    await store.reserveSpend(orgA, reserve(own.run, own.lease, 5_000, 1_000_000))
 
     expect(await store.getRun(orgB, run.id)).toBeNull()
     expect(await store.getRunSet(orgB, run.runSetId)).toBeNull()

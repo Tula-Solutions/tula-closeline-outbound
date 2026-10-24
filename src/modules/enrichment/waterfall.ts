@@ -20,7 +20,13 @@ import {
   type ProviderFailure,
 } from '~/ports/enrichment-provider'
 import type { ProviderSetting } from '~/ports/provider-config'
-import type { Provenance, StoredVerification } from '~/ports/store'
+import {
+  type Lease,
+  LeaseLostError,
+  type Provenance,
+  type Reservation,
+  type StoredVerification,
+} from '~/ports/store'
 import { cleanVendorText } from './clean'
 import type { EnrichmentDeps } from './deps'
 
@@ -106,6 +112,7 @@ type State = {
   verification: StoredVerification | null
   satisfied: Set<FieldGroup>
   stop: Stop | null
+  lease: Lease
 }
 
 /** Records one attempt (and what it found) in the store and in the running state. */
@@ -114,14 +121,15 @@ async function record(
   state: State,
   attempt: EnrichmentAttempt,
   fields: readonly Provenance[],
-  verification?: StoredVerification
+  extra?: { verification?: StoredVerification; reservation?: Reservation }
 ): Promise<void> {
   await deps.store.recordAttempt(
     state.organizationId,
     state.run.id,
+    state.lease,
     { ...attempt, position: state.position },
     fields,
-    verification
+    extra
   )
   state.position += 1
   state.cost += attempt.costMicros
@@ -150,8 +158,9 @@ function skipped(
 }
 
 /**
- * Checks the run ceiling and reserves the price against the month before a call. Returns true when
- * the call may go ahead; otherwise it has recorded a `skipped_budget` attempt and set the stop.
+ * Checks the run ceiling and reserves the price against the month before a call. Renews the run
+ * lease first, so a long run keeps it. Returns the reservation when the call may go ahead;
+ * otherwise it has recorded a `skipped_budget` attempt and set the stop.
  */
 async function admit(
   deps: EnrichmentDeps,
@@ -159,24 +168,43 @@ async function admit(
   provider: ProviderKey,
   group: FieldGroup,
   price: number
-): Promise<boolean> {
+): Promise<Reservation | null> {
   if (state.cost + price > state.run.ceilingMicros) {
     state.stop = 'run_ceiling'
   } else {
-    const reserved = await deps.store.reserveSpend(
-      state.organizationId,
-      monthOf(deps.clock.now()),
+    const now = deps.clock.now()
+    state.lease = await deps.store.renewLease(state.organizationId, state.run.id, state.lease, now)
+    const reserved = await deps.store.reserveSpend(state.organizationId, {
+      runId: state.run.id,
+      lease: state.lease,
       provider,
-      price,
-      deps.limits.monthlyBudgetMicros
-    )
-    if (reserved) {
-      return true
+      priceMicros: price,
+      limitMicros: deps.limits.monthlyBudgetMicros,
+      now,
+      holdSeconds: deps.limits.runLeaseSeconds,
+    })
+    if (reserved !== null) {
+      return reserved
     }
     state.stop = 'monthly_budget'
   }
   await record(deps, state, skipped(deps, provider, group, 'skipped_budget'), [])
-  return false
+  return null
+}
+
+/** Gives a reservation back after a call that threw; a lost lease means someone else owns it now. */
+async function releaseHeld(
+  deps: EnrichmentDeps,
+  state: State,
+  reservation: Reservation
+): Promise<void> {
+  try {
+    await deps.store.releaseSpend(state.organizationId, state.run.id, state.lease, reservation)
+  } catch (error) {
+    if (!(error instanceof LeaseLostError)) {
+      throw error
+    }
+  }
 }
 
 /** Runs the providers of a person or company group in order until one fills a field. */
@@ -212,10 +240,11 @@ async function fillGroup(
       await record(deps, state, skipped(deps, provider.key, group, 'skipped_disabled'), [])
       continue
     }
-    if (!(await admit(deps, state, provider.key, group, provider.priceMicros))) {
+    const reservation = await admit(deps, state, provider.key, group, provider.priceMicros)
+    if (reservation === null) {
       return
     }
-    if (await tryProvider(deps, state, provider, group, wanted, setting.apiKey)) {
+    if (await tryProvider(deps, state, provider, group, wanted, setting.apiKey, reservation)) {
       state.satisfied.add(group)
       return
     }
@@ -261,20 +290,12 @@ async function tryProvider(
   provider: EnrichmentProvider,
   group: FieldGroup,
   wanted: readonly EnrichedFieldName[],
-  apiKey: string
+  apiKey: string,
+  reservation: Reservation
 ): Promise<boolean> {
   const startedAt = deps.clock.now()
   const known = { ...state.known }
-  const month = monthOf(startedAt)
   const price = provider.priceMicros
-  let held = true
-  /** Gives the reserved price back, once, however the attempt ends. */
-  const release = async () => {
-    if (held) {
-      held = false
-      await deps.store.releaseSpend(state.organizationId, month, provider.key, price)
-    }
-  }
   try {
     const called = await callWithRetry(deps, (signal) =>
       provider.lookup({ wanted, known, apiKey, signal })
@@ -287,7 +308,6 @@ async function tryProvider(
         ? 'invalid_response'
         : null
     if (failure !== null || items === null) {
-      await release()
       deps.logger.warn('provider call failed', { provider: provider.key, failure })
       await record(
         deps,
@@ -301,7 +321,8 @@ async function tryProvider(
           startedAt: startedAt.toISOString(),
           durationMs,
         },
-        []
+        [],
+        { reservation }
       )
       return false
     }
@@ -342,11 +363,12 @@ async function tryProvider(
         startedAt: startedAt.toISOString(),
         durationMs,
       },
-      [...found.values()]
+      [...found.values()],
+      { reservation }
     )
     return found.size > 0
   } catch (error) {
-    await release()
+    await releaseHeld(deps, state, reservation)
     throw error
   }
 }
@@ -381,24 +403,12 @@ async function verifyEmail(
       await record(deps, state, skipped(deps, verifier.key, group, 'skipped_disabled'), [])
       continue
     }
-    if (!(await admit(deps, state, verifier.key, group, verifier.priceMicros))) {
+    const reservation = await admit(deps, state, verifier.key, group, verifier.priceMicros)
+    if (reservation === null) {
       return
     }
     const apiKey = setting.apiKey
     const startedAt = deps.clock.now()
-    let held = true
-    /** Gives the reserved price back, once, however the attempt ends. */
-    const release = async () => {
-      if (held) {
-        held = false
-        await deps.store.releaseSpend(
-          state.organizationId,
-          monthOf(startedAt),
-          verifier.key,
-          verifier.priceMicros
-        )
-      }
-    }
     try {
       const called = await callWithRetry(deps, (signal) =>
         verifier.verify({ email, apiKey, signal })
@@ -407,7 +417,6 @@ async function verifyEmail(
       const answer = called.ok ? verdictOf(called.value) : null
       if (!called.ok || answer === null) {
         const failure: ProviderFailure = called.ok ? 'invalid_response' : called.failure
-        await release()
         deps.logger.warn('provider call failed', { provider: verifier.key, failure })
         await record(
           deps,
@@ -421,7 +430,8 @@ async function verifyEmail(
             startedAt: startedAt.toISOString(),
             durationMs,
           },
-          []
+          [],
+          { reservation }
         )
         continue
       }
@@ -445,10 +455,10 @@ async function verifyEmail(
           durationMs,
         },
         [],
-        verdict
+        { verification: verdict, reservation }
       )
     } catch (error) {
-      await release()
+      await releaseHeld(deps, state, reservation)
       throw error
     }
     state.satisfied.add(group)
@@ -477,6 +487,23 @@ export async function execute(
   organizationId: OrganizationId,
   runId: EnrichmentRunId
 ): Promise<void> {
+  try {
+    await executeClaimed(deps, organizationId, runId)
+  } catch (error) {
+    if (!(error instanceof LeaseLostError)) {
+      throw error
+    }
+    // Another worker took the run after the lease ran out; it owns the run and its result now.
+    deps.logger.warn('run lease lost', { runId })
+  }
+}
+
+/** The body of {@link execute}; throws {@link LeaseLostError} when the lease is taken over. */
+async function executeClaimed(
+  deps: EnrichmentDeps,
+  organizationId: OrganizationId,
+  runId: EnrichmentRunId
+): Promise<void> {
   const claim = await deps.store.claim(
     organizationId,
     runId,
@@ -492,7 +519,7 @@ export async function execute(
   const run = claim.run
   const input = await deps.core.getEnrichmentInput(organizationId, run.prospectId)
   if (input === null) {
-    await deps.store.finish(organizationId, runId, {
+    await deps.store.finish(organizationId, runId, claim.lease, {
       status: 'incomplete',
       stopReason: null,
       emailVerification: run.emailVerification,
@@ -514,6 +541,7 @@ export async function execute(
     verification: run.emailVerification,
     satisfied: new Set(),
     stop: null,
+    lease: claim.lease,
   }
   for (const field of run.fields) {
     state.known[field.field] = field.value
@@ -555,6 +583,7 @@ export async function execute(
       confidence: field.confidence,
       obtainedAt: field.obtainedAt,
     }))
+    state.lease = await deps.store.renewLease(organizationId, runId, state.lease, deps.clock.now())
     const answer = await deps.core.writeEnrichedFields(organizationId, run.prospectId, {
       runId,
       fields: writes,
@@ -562,7 +591,7 @@ export async function execute(
     applications.push(...answer.results)
   }
   const complete = run.groups.every((group) => state.satisfied.has(group))
-  await deps.store.finish(organizationId, runId, {
+  await deps.store.finish(organizationId, runId, state.lease, {
     status: state.stop !== null ? 'stopped' : complete ? 'complete' : 'incomplete',
     stopReason: state.stop,
     emailVerification: state.verification,

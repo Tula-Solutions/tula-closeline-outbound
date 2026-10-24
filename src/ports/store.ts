@@ -29,9 +29,39 @@ export type NewRun = {
   createdAt: Date
 }
 
+/**
+ * The fencing token of a run lease: it changes at every claim and every renewal, and every write
+ * by the leaseholder is checked against it, so a worker whose lease passed to another is refused.
+ */
+export type Lease = string
+
+/** Thrown by a store write when the caller's {@link Lease} is no longer the run's current one. */
+export class LeaseLostError extends Error {
+  constructor() {
+    super('the run lease passed to another worker')
+    this.name = 'LeaseLostError'
+  }
+}
+
+/** Budget held for one provider call; it names the month it was taken from, whatever the date is later. */
+export type Reservation = { month: string; priceMicros: number }
+
+/** What a reservation asks for. */
+export type ReserveRequest = {
+  runId: EnrichmentRunId
+  lease: Lease
+  provider: ProviderKey
+  priceMicros: number
+  limitMicros: number
+  /** When the reservation is made; it decides the month and starts the hold's expiry. */
+  now: Date
+  /** How long a hold counts against the month before it is treated as left by a crash. */
+  holdSeconds: number
+}
+
 /** The result of trying to take a run for execution. */
 export type Claim =
-  | { kind: 'claimed'; run: EnrichmentRun }
+  | { kind: 'claimed'; run: EnrichmentRun; lease: Lease }
   | { kind: 'busy' }
   | { kind: 'finished' }
   | { kind: 'missing' }
@@ -62,7 +92,12 @@ export type RunFilter = {
 
 /** Where enrichment runs, their attempts and the Organization's spend are kept. */
 export type EnrichmentStore = {
-  /** Creates the runs queued. A run whose (Prospect, request id) exists is skipped; returns how many were created. */
+  /**
+   * Creates the runs queued, all or none. They share one run set id, and that id is derived from the
+   * idempotency key, so when the run set already has runs (an earlier or a concurrent request with
+   * the same key) nothing is created and the result is 0. A run whose (Prospect, request id) exists
+   * is skipped; returns how many were created.
+   */
   createRuns: (organizationId: OrganizationId, runs: readonly NewRun[]) => Promise<number>
   /** The runs already made for these Prospects under this request id. */
   findByRequest: (
@@ -81,33 +116,53 @@ export type EnrichmentStore = {
     leaseSeconds: number
   ) => Promise<Claim>
   /**
-   * Reserves `priceMicros` against the month's budget before a provider call. False, and nothing
-   * reserved, when the month's spend plus the price would pass `limitMicros`. Serialised per Organization.
+   * Renews the lease of a run the worker still holds and returns the new token. Throws
+   * {@link LeaseLostError} when another worker has taken the run.
+   */
+  renewLease: (
+    organizationId: OrganizationId,
+    runId: EnrichmentRunId,
+    lease: Lease,
+    now: Date
+  ) => Promise<Lease>
+  /**
+   * Holds `priceMicros` against the month's budget before a provider call; null, and nothing held,
+   * when the month's spend and holds plus the price would pass the limit. Serialised per
+   * Organization. One hold per run at a time; a hold older than `holdSeconds` (a worker that died)
+   * stops counting, and claiming the run again drops it. Throws {@link LeaseLostError}.
    */
   reserveSpend: (
     organizationId: OrganizationId,
-    month: string,
-    provider: ProviderKey,
-    priceMicros: number,
-    limitMicros: number
-  ) => Promise<boolean>
-  /** Gives back a reservation for a call that was not billed. */
+    request: ReserveRequest
+  ) => Promise<Reservation | null>
+  /** Gives back a hold for a call that was not billed, in the month it was taken from. */
   releaseSpend: (
     organizationId: OrganizationId,
-    month: string,
-    provider: ProviderKey,
-    priceMicros: number
+    runId: EnrichmentRunId,
+    lease: Lease,
+    reservation: Reservation
   ) => Promise<void>
-  /** Records one attempt, adds its cost to the run, and stores the fields and the email verdict it found, together. */
+  /**
+   * Records one attempt, adds its cost to the run, and stores the fields and the email verdict it
+   * found, together. When the attempt was made under a `reservation`, the same transaction turns
+   * the hold into spend of exactly the attempt's cost (nothing for a failed call), so no crash can
+   * leave a hold without its attempt. Throws {@link LeaseLostError}.
+   */
   recordAttempt: (
     organizationId: OrganizationId,
     runId: EnrichmentRunId,
+    lease: Lease,
     attempt: EnrichmentAttempt & { position: number },
     fields: readonly Provenance[],
-    verification?: StoredVerification
+    extra?: { verification?: StoredVerification | undefined; reservation?: Reservation | undefined }
   ) => Promise<void>
-  /** Ends a run. */
-  finish: (organizationId: OrganizationId, runId: EnrichmentRunId, end: Finish) => Promise<void>
+  /** Ends a run. Throws {@link LeaseLostError}. */
+  finish: (
+    organizationId: OrganizationId,
+    runId: EnrichmentRunId,
+    lease: Lease,
+    end: Finish
+  ) => Promise<void>
   /** One run with its attempts, or null. */
   getRun: (organizationId: OrganizationId, runId: EnrichmentRunId) => Promise<EnrichmentRun | null>
   /** One run set's progress, or null. */
@@ -117,6 +172,6 @@ export type EnrichmentStore = {
   ) => Promise<EnrichmentRunSet | null>
   /** A page of runs, newest first (created time, then id). */
   listRuns: (organizationId: OrganizationId, filter: RunFilter) => Promise<RunPage>
-  /** What the Organization has spent on providers in the month (`YYYY-MM-01`), in micro-dollars. */
+  /** What the Organization has spent on providers in the month (`YYYY-MM-01`), holds included, in micro-dollars. */
   monthSpend: (organizationId: OrganizationId, month: string) => Promise<number>
 }
