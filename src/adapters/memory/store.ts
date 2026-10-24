@@ -24,12 +24,13 @@ import {
 type Row = {
   run: EnrichmentRun
   requestId: string
-  claimedAt: number | null
+  /** The last claim or renewal, in ms; the lease runs out `leaseSeconds` after it. */
+  heartbeatAt: number | null
   lease: Lease | null
 }
 
-/** A hold on the budget by one run, with the time it was taken. */
-type Hold = { month: string; priceMicros: number; at: number }
+/** A reservation on the budget by one run, with the time it was taken; open until `released`. */
+type Hold = { runId: string; month: string; priceMicros: number; at: number; released: boolean }
 
 type Spend = { costMicros: number; calls: number }
 
@@ -57,7 +58,7 @@ export function createMemoryEnrichmentStore(): EnrichmentStore & {
 } {
   const rows = new Map<string, Map<string, Row>>()
   const spend = new Map<string, Map<ProviderKey, Spend>>()
-  /** Holds by Organization, then run. */
+  /** Reservations by Organization, then hold key; a released one stays, like its Postgres row. */
   const holds = new Map<string, Map<string, Hold>>()
 
   const holdsOf = (organizationId: OrganizationId): Map<string, Hold> => {
@@ -75,6 +76,15 @@ export function createMemoryEnrichmentStore(): EnrichmentStore & {
       throw new LeaseLostError()
     }
     return row
+  }
+
+  /** Releases the open reservations of one run. */
+  const releaseRun = (organizationId: OrganizationId, runId: string): void => {
+    for (const hold of holdsOf(organizationId).values()) {
+      if (hold.runId === runId) {
+        hold.released = true
+      }
+    }
   }
 
   const rowsOf = (organizationId: OrganizationId): Map<string, Row> => {
@@ -100,7 +110,7 @@ export function createMemoryEnrichmentStore(): EnrichmentStore & {
       sum += entry.costMicros
     }
     for (const hold of holdsOf(organizationId).values()) {
-      if (hold.month === month) {
+      if (hold.month === month && !hold.released) {
         sum += hold.priceMicros
       }
     }
@@ -127,7 +137,7 @@ export function createMemoryEnrichmentStore(): EnrichmentStore & {
         }
         own.set(input.id, {
           requestId: input.requestId,
-          claimedAt: null,
+          heartbeatAt: null,
           lease: null,
           run: {
             id: input.id,
@@ -171,44 +181,49 @@ export function createMemoryEnrichmentStore(): EnrichmentStore & {
       }
       if (
         run.status === 'running' &&
-        row.claimedAt !== null &&
-        now.getTime() < row.claimedAt + leaseSeconds * 1000
+        row.heartbeatAt !== null &&
+        now.getTime() < row.heartbeatAt + leaseSeconds * 1000
       ) {
         return { kind: 'busy' }
       }
       run.status = 'running'
-      // Like the Postgres store, where startedAt is also the lease start: the latest claim.
-      run.startedAt = now.toISOString()
-      row.claimedAt = now.getTime()
-      row.lease = now.toISOString()
+      // The true start stays through a takeover; the token and heartbeat belong to this claim.
+      run.startedAt = run.startedAt ?? now.toISOString()
+      row.heartbeatAt = now.getTime()
+      row.lease = crypto.randomUUID()
       // The worker that held the run is fenced out, so whatever it had reserved is dead.
-      holdsOf(organizationId).delete(runId)
+      releaseRun(organizationId, runId)
       return { kind: 'claimed', run: copy(run), lease: row.lease }
     },
 
     async renewLease(organizationId, runId, lease, now) {
       const row = held(organizationId, runId, lease)
-      row.claimedAt = now.getTime()
-      row.lease = now.toISOString()
-      row.run.startedAt = row.lease
-      return row.lease
+      row.heartbeatAt = now.getTime()
+      return lease
     },
 
     async reserveSpend(organizationId, request) {
       held(organizationId, request.runId, request.lease)
       const month = `${request.now.toISOString().slice(0, 7)}-01`
       const own = holdsOf(organizationId)
-      for (const [runId, hold] of own) {
+      for (const hold of own.values()) {
         if (request.now.getTime() >= hold.at + request.holdSeconds * 1000) {
-          own.delete(runId)
+          hold.released = true
         }
       }
-      own.delete(request.runId)
+      releaseRun(organizationId, request.runId)
       if (total(organizationId, month) + request.priceMicros > request.limitMicros) {
         return null
       }
-      own.set(request.runId, { month, priceMicros: request.priceMicros, at: request.now.getTime() })
-      return { month, priceMicros: request.priceMicros }
+      const holdKey = `${request.runId}:${crypto.randomUUID()}`
+      own.set(holdKey, {
+        runId: request.runId,
+        month,
+        priceMicros: request.priceMicros,
+        at: request.now.getTime(),
+        released: false,
+      })
+      return { month, priceMicros: request.priceMicros, holdKey }
     },
 
     async releaseSpend(organizationId, runId, lease) {
@@ -220,7 +235,7 @@ export function createMemoryEnrichmentStore(): EnrichmentStore & {
         }
         throw error
       }
-      holdsOf(organizationId).delete(runId)
+      releaseRun(organizationId, runId)
     },
 
     async recordAttempt(
@@ -238,7 +253,7 @@ export function createMemoryEnrichmentStore(): EnrichmentStore & {
       const verification: StoredVerification | undefined = extra?.verification
       const reservation = extra?.reservation
       if (reservation !== undefined) {
-        holdsOf(organizationId).delete(runId)
+        releaseRun(organizationId, runId)
         if (attempt.costMicros > 0) {
           const entries = spendOf(organizationId, reservation.month)
           const entry = entries.get(attempt.provider) ?? { costMicros: 0, calls: 0 }

@@ -1,12 +1,18 @@
-import { and, asc, desc, eq, inArray, lt, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm'
 import {
   type EnrichmentAttempt,
   type EnrichmentRun,
   type EnrichmentRunSet,
   enrichmentRunSchema,
+  formatId,
 } from 'tula-closeline-contract'
 import type { Transaction } from 'tula-closeline-db'
-import { enrichmentAttempts, enrichmentRuns, enrichmentSpend } from 'tula-closeline-db/schema'
+import {
+  enrichmentAttempts,
+  enrichmentReservations,
+  enrichmentRuns,
+  enrichmentSpend,
+} from 'tula-closeline-db/schema'
 import {
   type Claim,
   type EnrichmentStore,
@@ -60,17 +66,42 @@ function runOf(row: RunRow, attempts: readonly AttemptRow[]): EnrichmentRun {
 }
 
 /**
- * The key of the row in `enrichment_spend` that holds a run's reservation: a provider key (32
- * characters at most) made of a prefix no real provider uses and the run id's own digits. A hold
- * counts in the month's sum like spend, expires by `updated_at`, and is turned into spend or
- * deleted in the transaction that settles it. Routes that list spend by provider skip this prefix.
+ * Releases the open reservations that match, at the time they are released. `greatest` keeps the
+ * row's `released_at >= created_at` check true when a test clock runs ahead of the database's.
  */
-function holdKey(runId: string): string {
-  return `${HOLD_PREFIX}${runId.replace(/^erun_/, '').slice(0, 27)}`
+function releaseOpen(tx: Transaction, organizationId: string, match: ReturnType<typeof and>) {
+  return tx
+    .update(enrichmentReservations)
+    .set({ releasedAt: sql`greatest(now(), ${enrichmentReservations.createdAt})` })
+    .where(
+      and(
+        eq(enrichmentReservations.organizationId, organizationId),
+        isNull(enrichmentReservations.releasedAt),
+        match
+      )
+    )
 }
 
-/** What every hold key starts with. */
-const HOLD_PREFIX = 'hold_'
+/** What the Organization has spent in the month, plus the reservations still open against it. */
+async function monthTotal(tx: Transaction, organizationId: string, month: string): Promise<number> {
+  const [spent] = await tx
+    .select({ total: sql<string>`coalesce(sum(${enrichmentSpend.costMicros}), 0)` })
+    .from(enrichmentSpend)
+    .where(
+      and(eq(enrichmentSpend.organizationId, organizationId), eq(enrichmentSpend.month, month))
+    )
+  const [held] = await tx
+    .select({ total: sql<string>`coalesce(sum(${enrichmentReservations.amountMicros}), 0)` })
+    .from(enrichmentReservations)
+    .where(
+      and(
+        eq(enrichmentReservations.organizationId, organizationId),
+        eq(enrichmentReservations.month, month),
+        isNull(enrichmentReservations.releasedAt)
+      )
+    )
+  return Number(spent?.total ?? 0) + Number(held?.total ?? 0)
+}
 
 /** Locks the run's row and proves the caller still holds its lease; otherwise {@link LeaseLostError}. */
 async function assertLease(
@@ -87,7 +118,7 @@ async function assertLease(
         eq(enrichmentRuns.organizationId, organizationId),
         eq(enrichmentRuns.id, runId),
         eq(enrichmentRuns.status, 'running'),
-        sql`${enrichmentRuns.startedAt} = ${lease}::timestamptz`
+        eq(enrichmentRuns.leaseToken, lease)
       )
     )
     .for('update')
@@ -123,9 +154,10 @@ async function hydrate(tx: Transaction, rows: readonly RunRow[]): Promise<Enrich
  * The store in Postgres, always inside the Organization's transaction (forced row-level security).
  * The run row is the idempotency record: (Organization, Prospect, request id) is unique, a worker
  * takes a run with one atomic update, and the budget is checked under an Organization-wide lock.
- * `started_at` doubles as the claim time, so a run whose worker died is taken again after the lease,
- * and as the fencing token: every write by the leaseholder checks that it is still the value the
- * worker claimed or renewed with. A reservation is a `hold_` row in the spend table (see `holdKey`).
+ * A claim sets a fresh `lease_token` and `heartbeat_at`; a run whose heartbeat is older than the
+ * lease is taken again. The token is the fencing token: every write by the leaseholder checks that
+ * it is still the one the worker claimed with. `started_at` is the true start and never moves
+ * after the first claim. A reservation is a row in `enrichment_reservations`, open until released.
  */
 export function createPostgresEnrichmentStore(inOrganization: InOrganization): EnrichmentStore {
   return {
@@ -204,7 +236,12 @@ export function createPostgresEnrichmentStore(inOrganization: InOrganization): E
         const expired = new Date(now.getTime() - leaseSeconds * 1000)
         const taken = await tx
           .update(enrichmentRuns)
-          .set({ status: 'running', startedAt: now })
+          .set({
+            status: 'running',
+            startedAt: sql`coalesce(${enrichmentRuns.startedAt}, ${now.toISOString()}::timestamptz)`,
+            leaseToken: crypto.randomUUID(),
+            heartbeatAt: now,
+          })
           .where(
             and(
               eq(enrichmentRuns.organizationId, organizationId),
@@ -213,7 +250,7 @@ export function createPostgresEnrichmentStore(inOrganization: InOrganization): E
                 eq(enrichmentRuns.status, 'queued'),
                 and(
                   eq(enrichmentRuns.status, 'running'),
-                  sql`${enrichmentRuns.startedAt} <= ${expired.toISOString()}::timestamptz`
+                  sql`coalesce(${enrichmentRuns.heartbeatAt}, ${enrichmentRuns.startedAt}) <= ${expired.toISOString()}::timestamptz`
                 )
               )
             )
@@ -222,18 +259,11 @@ export function createPostgresEnrichmentStore(inOrganization: InOrganization): E
         const row = taken[0]
         if (row !== undefined) {
           // The worker that held the run is fenced out by the new claim, so its hold is dead.
-          await tx
-            .delete(enrichmentSpend)
-            .where(
-              and(
-                eq(enrichmentSpend.organizationId, organizationId),
-                eq(enrichmentSpend.provider, holdKey(runId))
-              )
-            )
+          await releaseOpen(tx, organizationId, eq(enrichmentReservations.runId, runId))
           return {
             kind: 'claimed',
             run: (await hydrate(tx, [row]))[0] as EnrichmentRun,
-            lease: now.toISOString(),
+            lease: row.leaseToken as string,
           }
         }
         const [current] = await tx
@@ -253,72 +283,65 @@ export function createPostgresEnrichmentStore(inOrganization: InOrganization): E
       return inOrganization(organizationId, async (tx) => {
         const renewed = await tx
           .update(enrichmentRuns)
-          .set({ startedAt: now })
+          .set({ heartbeatAt: now })
           .where(
             and(
               eq(enrichmentRuns.organizationId, organizationId),
               eq(enrichmentRuns.id, runId),
               eq(enrichmentRuns.status, 'running'),
-              sql`${enrichmentRuns.startedAt} = ${lease}::timestamptz`
+              eq(enrichmentRuns.leaseToken, lease)
             )
           )
           .returning({ id: enrichmentRuns.id })
         if (renewed.length === 0) {
           throw new LeaseLostError()
         }
-        return now.toISOString()
+        return lease
       })
     },
 
     async reserveSpend(organizationId, request) {
       const { runId, lease, provider, priceMicros, limitMicros, now, holdSeconds } = request
       const month = `${now.toISOString().slice(0, 7)}-01`
-      const key = holdKey(runId)
       return inOrganization(organizationId, async (tx) => {
         await assertLease(tx, organizationId, runId, lease)
         // One reservation at a time per Organization, so two runs cannot both pass the check.
         await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${organizationId}))`)
-        // Holds a dead worker left: this month's rows are at most a row per provider and live run.
-        await tx
-          .delete(enrichmentSpend)
-          .where(
-            and(
-              eq(enrichmentSpend.organizationId, organizationId),
-              eq(enrichmentSpend.month, month),
-              sql`${enrichmentSpend.provider} like ${`${HOLD_PREFIX}%`}`,
-              sql`${enrichmentSpend.updatedAt} <= ${new Date(now.getTime() - holdSeconds * 1000).toISOString()}::timestamptz`
-            )
+        // Reservations a dead worker left: this month's open rows are at most one per live run.
+        await releaseOpen(
+          tx,
+          organizationId,
+          and(
+            eq(enrichmentReservations.month, month),
+            sql`${enrichmentReservations.createdAt} <= ${new Date(now.getTime() - holdSeconds * 1000).toISOString()}::timestamptz`
           )
-        await tx
-          .delete(enrichmentSpend)
-          .where(
-            and(
-              eq(enrichmentSpend.organizationId, organizationId),
-              eq(enrichmentSpend.provider, key)
-            )
-          )
-        const [sum] = await tx
-          .select({ total: sql<string>`coalesce(sum(${enrichmentSpend.costMicros}), 0)` })
-          .from(enrichmentSpend)
-          .where(
-            and(
-              eq(enrichmentSpend.organizationId, organizationId),
-              eq(enrichmentSpend.month, month)
-            )
-          )
-        if (Number(sum?.total ?? 0) + priceMicros > limitMicros) {
+        )
+        // One reservation per run at a time.
+        await releaseOpen(tx, organizationId, eq(enrichmentReservations.runId, runId))
+        if ((await monthTotal(tx, organizationId, month)) + priceMicros > limitMicros) {
           return null
         }
-        await tx.insert(enrichmentSpend).values({
-          organizationId,
-          month,
-          provider: key,
-          costMicros: priceMicros,
-          calls: 0,
-          updatedAt: now,
-        })
-        void provider
-        return { month, priceMicros }
+        const holdKey = `${runId}:${crypto.randomUUID()}`
+        const [inserted] = await tx
+          .insert(enrichmentReservations)
+          .values({
+            id: formatId('ersv', crypto.randomUUID()),
+            organizationId,
+            runId,
+            provider,
+            month,
+            amountMicros: priceMicros,
+            holdKey,
+            createdAt: now,
+          })
+          .onConflictDoNothing({
+            target: [enrichmentReservations.organizationId, enrichmentReservations.holdKey],
+          })
+          .returning({ id: enrichmentReservations.id })
+        if (inserted === undefined) {
+          throw new Error('reservation key taken')
+        }
+        return { month, priceMicros, holdKey }
       })
     },
 
@@ -332,15 +355,11 @@ export function createPostgresEnrichmentStore(inOrganization: InOrganization): E
           }
           throw error
         }
-        await tx
-          .delete(enrichmentSpend)
-          .where(
-            and(
-              eq(enrichmentSpend.organizationId, organizationId),
-              eq(enrichmentSpend.month, reservation.month),
-              eq(enrichmentSpend.provider, holdKey(runId))
-            )
-          )
+        await releaseOpen(
+          tx,
+          organizationId,
+          eq(enrichmentReservations.holdKey, reservation.holdKey)
+        )
       })
     },
 
@@ -351,15 +370,11 @@ export function createPostgresEnrichmentStore(inOrganization: InOrganization): E
         await assertLease(tx, organizationId, runId, lease)
         if (reservation !== undefined) {
           // The hold becomes spend of the attempt's cost, in the month it was taken from.
-          await tx
-            .delete(enrichmentSpend)
-            .where(
-              and(
-                eq(enrichmentSpend.organizationId, organizationId),
-                eq(enrichmentSpend.month, reservation.month),
-                eq(enrichmentSpend.provider, holdKey(runId))
-              )
-            )
+          await releaseOpen(
+            tx,
+            organizationId,
+            eq(enrichmentReservations.holdKey, reservation.holdKey)
+          )
           if (attempt.costMicros > 0) {
             await tx
               .insert(enrichmentSpend)
@@ -561,18 +576,7 @@ export function createPostgresEnrichmentStore(inOrganization: InOrganization): E
     },
 
     async monthSpend(organizationId, month) {
-      return inOrganization(organizationId, async (tx) => {
-        const [sum] = await tx
-          .select({ total: sql<string>`coalesce(sum(${enrichmentSpend.costMicros}), 0)` })
-          .from(enrichmentSpend)
-          .where(
-            and(
-              eq(enrichmentSpend.organizationId, organizationId),
-              eq(enrichmentSpend.month, month)
-            )
-          )
-        return Number(sum?.total ?? 0)
-      })
+      return inOrganization(organizationId, (tx) => monthTotal(tx, organizationId, month))
     },
   }
 }
