@@ -134,7 +134,14 @@ export async function create(
   }
 
   const now = deps.clock.now()
-  const runSetId = formatId('erset', crypto.randomUUID())
+  // One run set per idempotency key, so a second request under the key can never add runs to it.
+  const runSetId = formatId(
+    'erset',
+    new Bun.CryptoHasher('sha256')
+      .update(`${organizationId}:${idempotencyKey}`)
+      .digest('hex')
+      .slice(0, 32)
+  )
   const runs: NewRun[] = prospectIds.map((prospectId) => ({
     id: formatId('erun', crypto.randomUUID()),
     runSetId,
