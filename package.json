@@ -23,8 +23,8 @@
   "dependencies": {
     "@hono/zod-openapi": "^1.6.3",
     "hono": "^4.13.13",
-    "tula-closeline-contract": "git+ssh://git@github.com/Tula-Solutions/tula-closeline-contract.git#v0.6.0",
-    "tula-closeline-kit": "git+ssh://git@github.com/Tula-Solutions/tula-closeline-kit.git#v0.8.0",
+    "tula-closeline-contract": "git+ssh://git@github.com/Tula-Solutions/tula-closeline-contract.git#v0.44.0",
+    "tula-closeline-kit": "git+ssh://git@github.com/Tula-Solutions/tula-closeline-kit.git#v0.26.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {

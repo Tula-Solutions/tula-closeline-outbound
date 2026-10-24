@@ -48,7 +48,8 @@ The shape in `.claude/COMMON.md` is built; add modules under `src/modules/<name>
 
 ## Hot paths
 
-The per-request middleware stack (`createBaseApp`) and `/healthz`. Budgets are in `bench/`.
+None yet: no campaign code exists. The per-request middleware stack (`createBaseApp`) and `/healthz`
+come from the template and keep the budgets in `bench/`.
 
 A benchmark times `measure(operation)`: a warm-up, then several batches, gated on the fastest, so a
 noisy runner cannot fail it but a real regression (every batch slower) does. Budget is about 5x the
