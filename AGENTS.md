@@ -48,8 +48,10 @@ The shape in `.claude/COMMON.md` is built; add modules under `src/modules/<name>
 
 ## Hot paths
 
-None yet: no campaign code exists. The per-request middleware stack (`createBaseApp`) and `/healthz`
-come from the template and keep the budgets in `bench/`.
+`POST /v1/enrichment-runs` (`bench/enrichment.bench.test.ts`): O(k) in the Prospects named (at most
+500), never in the Organization's size. One visibility check, one idempotency lookup, one insert and
+the queue publish in batches of ten. The waterfall itself runs from the queue, off the request path.
+The per-request middleware stack (`createBaseApp`) and `/healthz` keep the budgets in `bench/`.
 
 A benchmark times `measure(operation)`: a warm-up, then several batches, gated on the fastest, so a
 noisy runner cannot fail it but a real regression (every batch slower) does. Budget is about 5x the

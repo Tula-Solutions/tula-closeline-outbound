@@ -5,13 +5,23 @@
     "version": "0.0.0"
   },
   "components": {
+    "securitySchemes": {
+      "accessToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "An access token issued by the auth service."
+      }
+    },
     "schemas": {},
     "parameters": {}
   },
   "paths": {
     "/healthz": {
       "get": {
-        "tags": ["health"],
+        "tags": [
+          "health"
+        ],
         "summary": "Liveness",
         "description": "Returns 200 while the process is up. It checks no dependency.",
         "responses": {
@@ -24,7 +34,9 @@
                   "properties": {
                     "status": {
                       "type": "string",
-                      "enum": ["ok"]
+                      "enum": [
+                        "ok"
+                      ]
                     },
                     "service": {
                       "type": "string"
@@ -36,7 +48,11 @@
                       }
                     }
                   },
-                  "required": ["status", "service", "libraries"]
+                  "required": [
+                    "status",
+                    "service",
+                    "libraries"
+                  ]
                 }
               }
             }
@@ -66,10 +82,15 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -79,7 +100,9 @@
     },
     "/readyz": {
       "get": {
-        "tags": ["health"],
+        "tags": [
+          "health"
+        ],
         "summary": "Readiness",
         "description": "Runs every dependency check, each with a short timeout; 503 when any fails.",
         "responses": {
@@ -92,7 +115,10 @@
                   "properties": {
                     "status": {
                       "type": "string",
-                      "enum": ["ready", "unavailable"]
+                      "enum": [
+                        "ready",
+                        "unavailable"
+                      ]
                     },
                     "checks": {
                       "type": "array",
@@ -104,14 +130,24 @@
                           },
                           "status": {
                             "type": "string",
-                            "enum": ["ok", "failed", "timeout"]
+                            "enum": [
+                              "ok",
+                              "failed",
+                              "timeout"
+                            ]
                           }
                         },
-                        "required": ["name", "status"]
+                        "required": [
+                          "name",
+                          "status"
+                        ]
                       }
                     }
                   },
-                  "required": ["status", "checks"]
+                  "required": [
+                    "status",
+                    "checks"
+                  ]
                 }
               }
             }
@@ -141,10 +177,15 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -158,7 +199,10 @@
                   "properties": {
                     "status": {
                       "type": "string",
-                      "enum": ["ready", "unavailable"]
+                      "enum": [
+                        "ready",
+                        "unavailable"
+                      ]
                     },
                     "checks": {
                       "type": "array",
@@ -170,14 +214,1954 @@
                           },
                           "status": {
                             "type": "string",
-                            "enum": ["ok", "failed", "timeout"]
+                            "enum": [
+                              "ok",
+                              "failed",
+                              "timeout"
+                            ]
                           }
                         },
-                        "required": ["name", "status"]
+                        "required": [
+                          "name",
+                          "status"
+                        ]
                       }
                     }
                   },
-                  "required": ["status", "checks"]
+                  "required": [
+                    "status",
+                    "checks"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/enrichment-runs": {
+      "post": {
+        "description": "Enriches one to 500 Prospects, optionally for some field groups only (person, company, email_verification). It makes a run set with one run per Prospect, queues the runs in bounded batches and answers 202 with the run set; nothing runs on the request. Each run walks the Organization's provider order per group, asks only for what is still missing, stops on the first result with enough confidence, and records every attempt with its provider, outcome and cost in micro-dollars. The monthly budget and the run ceiling are checked before each provider call, never after: a run that reaches either ends stopped with the reason. An Organization's own imported value is never overwritten; the provider's value is kept beside it as suggested. Written values reach the Prospect with the Source enrichment:<provider>. Requires an Idempotency-Key header: a replay answers the same result and does the work once. The key is the request id: the same key twice charges once and answers 200 with the same run set. A named Prospect outside the caller's view fails the whole call with enrichment.prospect_not_found (404). enrichment.budget_exceeded (429) when this month's budget is already spent; enrichment.provider_unavailable (503) when no provider is enabled with a key for a group asked for; enrichment.verification_failed (422) when email verification is asked for a Prospect with no address. Publishes enrichment.completed as each run ends. Provider, web and webhook text is untrusted data: validated, bounded, shown to people and never run as an instruction, and never put in a log or an event. An Owner or Admin sees every Prospect; a Manager those owned by Reps on their Team; a Rep only their own. A Prospect (enrichment.prospect_not_found) outside the caller's view is its not_found code (404), never 403, and one of another Organization the same.",
+        "tags": [
+          "enrichment"
+        ],
+        "summary": "Enrich one Prospect or a bounded set",
+        "security": [
+          {
+            "accessToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_.:-]+$",
+              "description": "Makes a repeat of the same request charge once."
+            },
+            "required": true,
+            "description": "Makes a repeat of the same request charge once.",
+            "name": "idempotency-key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "prospectIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^prs_[0-9a-f]{32}$"
+                    },
+                    "minItems": 1,
+                    "maxItems": 500
+                  },
+                  "groups": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "person",
+                        "company",
+                        "email_verification"
+                      ]
+                    },
+                    "minItems": 1,
+                    "maxItems": 3
+                  }
+                },
+                "required": [
+                  "prospectIds"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The same request was already accepted; this is its run set.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^erset_[0-9a-f]{32}$"
+                    },
+                    "total": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 500
+                    },
+                    "counts": {
+                      "type": "object",
+                      "properties": {
+                        "queued": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 500
+                        },
+                        "running": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 500
+                        },
+                        "complete": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 500
+                        },
+                        "incomplete": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 500
+                        },
+                        "stopped": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 500
+                        }
+                      },
+                      "required": [
+                        "queued",
+                        "running",
+                        "complete",
+                        "incomplete",
+                        "stopped"
+                      ]
+                    },
+                    "costMicros": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1000000000000
+                    },
+                    "done": {
+                      "type": "boolean"
+                    },
+                    "requestedByUserId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^usr_[0-9a-f]{32}$"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "maxLength": 64,
+                      "format": "date-time"
+                    },
+                    "completedAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "maxLength": 64,
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "total",
+                    "counts",
+                    "costMicros",
+                    "done",
+                    "requestedByUserId",
+                    "createdAt",
+                    "completedAt"
+                  ]
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "The runs were queued; poll the run set.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^erset_[0-9a-f]{32}$"
+                    },
+                    "total": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 500
+                    },
+                    "counts": {
+                      "type": "object",
+                      "properties": {
+                        "queued": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 500
+                        },
+                        "running": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 500
+                        },
+                        "complete": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 500
+                        },
+                        "incomplete": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 500
+                        },
+                        "stopped": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 500
+                        }
+                      },
+                      "required": [
+                        "queued",
+                        "running",
+                        "complete",
+                        "incomplete",
+                        "stopped"
+                      ]
+                    },
+                    "costMicros": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1000000000000
+                    },
+                    "done": {
+                      "type": "boolean"
+                    },
+                    "requestedByUserId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^usr_[0-9a-f]{32}$"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "maxLength": 64,
+                      "format": "date-time"
+                    },
+                    "completedAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "maxLength": 64,
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "total",
+                    "counts",
+                    "costMicros",
+                    "done",
+                    "requestedByUserId",
+                    "createdAt",
+                    "completedAt"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "request.invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "auth.unauthenticated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "auth.forbidden.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "enrichment.prospect_not_found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "request.idempotency_in_progress.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^[1-9][0-9]*$",
+                  "description": "Whole seconds to wait before trying again."
+                },
+                "required": true,
+                "description": "Whole seconds to wait before trying again."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "enrichment.verification_failed, request.idempotency_key_reused.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "enrichment.budget_exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "server.internal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "enrichment.provider_unavailable.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^[1-9][0-9]*$",
+                  "description": "Whole seconds to wait before trying again."
+                },
+                "required": true,
+                "description": "Whole seconds to wait before trying again."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "description": "Lists runs, newest first (by createdAt, then id), one cursor-paginated page at a time (at most 100), optionally narrowed by prospectId, runSetId and status. A filter never widens what the caller may see. Provider, web and webhook text is untrusted data: validated, bounded, shown to people and never run as an instruction, and never put in a log or an event. An Owner or Admin sees every Prospect; a Manager those owned by Reps on their Team; a Rep only their own. A Prospect (enrichment.prospect_not_found) outside the caller's view is its not_found code (404), never 403, and one of another Organization the same.",
+        "tags": [
+          "enrichment"
+        ],
+        "summary": "List enrichment runs",
+        "security": [
+          {
+            "accessToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "required": false,
+            "name": "cursor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^\\d{1,3}$"
+                }
+              ],
+              "default": 25
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^prs_[0-9a-f]{32}$"
+            },
+            "required": false,
+            "name": "prospectId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^erset_[0-9a-f]{32}$"
+            },
+            "required": false,
+            "name": "runSetId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "queued",
+                "running",
+                "complete",
+                "incomplete",
+                "stopped"
+              ]
+            },
+            "required": false,
+            "name": "status",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of runs, newest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "pattern": "^erun_[0-9a-f]{32}$"
+                          },
+                          "runSetId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "pattern": "^erset_[0-9a-f]{32}$"
+                          },
+                          "prospectId": {
+                            "type": "string",
+                            "pattern": "^prs_[0-9a-f]{32}$"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "queued",
+                              "running",
+                              "complete",
+                              "incomplete",
+                              "stopped"
+                            ]
+                          },
+                          "stopReason": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "enum": [
+                              "monthly_budget",
+                              "run_ceiling",
+                              null
+                            ]
+                          },
+                          "groups": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": [
+                                "person",
+                                "company",
+                                "email_verification"
+                              ]
+                            },
+                            "minItems": 1,
+                            "maxItems": 3
+                          },
+                          "attempts": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "provider": {
+                                  "type": "string",
+                                  "maxLength": 32,
+                                  "pattern": "^[a-z][a-z0-9_]*$"
+                                },
+                                "group": {
+                                  "type": "string",
+                                  "enum": [
+                                    "person",
+                                    "company",
+                                    "email_verification"
+                                  ]
+                                },
+                                "outcome": {
+                                  "type": "string",
+                                  "enum": [
+                                    "filled",
+                                    "no_result",
+                                    "failed",
+                                    "skipped_disabled",
+                                    "skipped_circuit_open",
+                                    "skipped_budget"
+                                  ]
+                                },
+                                "failure": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ],
+                                  "enum": [
+                                    "timeout",
+                                    "rate_limited",
+                                    "provider_error",
+                                    "invalid_response",
+                                    "key_rejected",
+                                    null
+                                  ]
+                                },
+                                "costMicros": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 1000000000000
+                                },
+                                "startedAt": {
+                                  "type": "string",
+                                  "maxLength": 64,
+                                  "format": "date-time"
+                                },
+                                "durationMs": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 600000
+                                }
+                              },
+                              "required": [
+                                "provider",
+                                "group",
+                                "outcome",
+                                "failure",
+                                "costMicros",
+                                "startedAt",
+                                "durationMs"
+                              ]
+                            },
+                            "maxItems": 150
+                          },
+                          "fields": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "field": {
+                                  "type": "string",
+                                  "enum": [
+                                    "firstName",
+                                    "lastName",
+                                    "jobTitle",
+                                    "linkedinUrl",
+                                    "email",
+                                    "companyName",
+                                    "companyDomain",
+                                    "industry",
+                                    "employeeCount",
+                                    "region",
+                                    "technologies"
+                                  ]
+                                },
+                                "value": {
+                                  "type": "string",
+                                  "maxLength": 6400
+                                },
+                                "truncated": {
+                                  "type": "boolean"
+                                },
+                                "provider": {
+                                  "type": "string",
+                                  "maxLength": 32,
+                                  "pattern": "^[a-z][a-z0-9_]*$"
+                                },
+                                "confidence": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 100
+                                },
+                                "obtainedAt": {
+                                  "type": "string",
+                                  "maxLength": 64,
+                                  "format": "date-time"
+                                },
+                                "costMicros": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 1000000000000
+                                },
+                                "application": {
+                                  "type": "string",
+                                  "enum": [
+                                    "written",
+                                    "suggested"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "field",
+                                "value",
+                                "truncated",
+                                "provider",
+                                "confidence",
+                                "obtainedAt",
+                                "costMicros",
+                                "application"
+                              ]
+                            },
+                            "maxItems": 11
+                          },
+                          "emailVerification": {
+                            "type": [
+                              "object",
+                              "null"
+                            ],
+                            "properties": {
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "valid",
+                                  "risky",
+                                  "invalid"
+                                ]
+                              },
+                              "reason": {
+                                "type": "string",
+                                "enum": [
+                                  "accepted",
+                                  "catch_all",
+                                  "role_based",
+                                  "disposable",
+                                  "mailbox_full",
+                                  "mailbox_not_found",
+                                  "domain_invalid",
+                                  "unknown"
+                                ]
+                              },
+                              "provider": {
+                                "type": "string",
+                                "maxLength": 32,
+                                "pattern": "^[a-z][a-z0-9_]*$"
+                              },
+                              "checkedAt": {
+                                "type": "string",
+                                "maxLength": 64,
+                                "format": "date-time"
+                              }
+                            },
+                            "required": [
+                              "status",
+                              "reason",
+                              "provider",
+                              "checkedAt"
+                            ]
+                          },
+                          "costMicros": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 1000000000000
+                          },
+                          "ceilingMicros": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 1000000000000
+                          },
+                          "requestedByUserId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "pattern": "^usr_[0-9a-f]{32}$"
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "maxLength": 64,
+                            "format": "date-time"
+                          },
+                          "startedAt": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "maxLength": 64,
+                            "format": "date-time"
+                          },
+                          "completedAt": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "maxLength": 64,
+                            "format": "date-time"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "runSetId",
+                          "prospectId",
+                          "status",
+                          "stopReason",
+                          "groups",
+                          "attempts",
+                          "fields",
+                          "emailVerification",
+                          "costMicros",
+                          "ceilingMicros",
+                          "requestedByUserId",
+                          "createdAt",
+                          "startedAt",
+                          "completedAt"
+                        ]
+                      },
+                      "maxItems": 100
+                    },
+                    "nextCursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "minLength": 1,
+                      "maxLength": 512
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "nextCursor"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "request.invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "auth.unauthenticated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "auth.forbidden.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "server.internal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/enrichment-run-sets/{runSetId}": {
+      "get": {
+        "description": "Reads the progress of one bulk request: total runs, counts by status, the cost so far and whether every run has ended. A Rep sees a run set only if they made it; a Manager those made by their Team; an Owner or Admin all. Everything here belongs to the caller's Organization alone: provider data bought by one Organization is never visible to another, and an id of another Organization is its not_found code (404), never 403.",
+        "tags": [
+          "enrichment"
+        ],
+        "summary": "Read the progress of a run set",
+        "security": [
+          {
+            "accessToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^erset_[0-9a-f]{32}$"
+            },
+            "required": true,
+            "name": "runSetId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run set with its counts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^erset_[0-9a-f]{32}$"
+                    },
+                    "total": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 500
+                    },
+                    "counts": {
+                      "type": "object",
+                      "properties": {
+                        "queued": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 500
+                        },
+                        "running": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 500
+                        },
+                        "complete": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 500
+                        },
+                        "incomplete": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 500
+                        },
+                        "stopped": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 500
+                        }
+                      },
+                      "required": [
+                        "queued",
+                        "running",
+                        "complete",
+                        "incomplete",
+                        "stopped"
+                      ]
+                    },
+                    "costMicros": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1000000000000
+                    },
+                    "done": {
+                      "type": "boolean"
+                    },
+                    "requestedByUserId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^usr_[0-9a-f]{32}$"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "maxLength": 64,
+                      "format": "date-time"
+                    },
+                    "completedAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "maxLength": 64,
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "total",
+                    "counts",
+                    "costMicros",
+                    "done",
+                    "requestedByUserId",
+                    "createdAt",
+                    "completedAt"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "auth.unauthenticated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "auth.forbidden.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "enrichment.run_set_not_found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "server.internal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/enrichment-runs/{runId}": {
+      "get": {
+        "description": "Reads one run: its status and stop reason, every attempt (provider, group, outcome, failure, cost), the fields it filled with provider, confidence, time, cost and whether each was written or only suggested, the email verification and the total cost against the ceiling. Provider, web and webhook text is untrusted data: validated, bounded, shown to people and never run as an instruction, and never put in a log or an event. An Owner or Admin sees every Prospect; a Manager those owned by Reps on their Team; a Rep only their own. A Prospect (enrichment.prospect_not_found) outside the caller's view is its not_found code (404), never 403, and one of another Organization the same.",
+        "tags": [
+          "enrichment"
+        ],
+        "summary": "Read one enrichment run with its attempts",
+        "security": [
+          {
+            "accessToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^erun_[0-9a-f]{32}$"
+            },
+            "required": true,
+            "name": "runId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run, its attempts, fields and cost.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^erun_[0-9a-f]{32}$"
+                    },
+                    "runSetId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^erset_[0-9a-f]{32}$"
+                    },
+                    "prospectId": {
+                      "type": "string",
+                      "pattern": "^prs_[0-9a-f]{32}$"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "queued",
+                        "running",
+                        "complete",
+                        "incomplete",
+                        "stopped"
+                      ]
+                    },
+                    "stopReason": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "enum": [
+                        "monthly_budget",
+                        "run_ceiling",
+                        null
+                      ]
+                    },
+                    "groups": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "person",
+                          "company",
+                          "email_verification"
+                        ]
+                      },
+                      "minItems": 1,
+                      "maxItems": 3
+                    },
+                    "attempts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "provider": {
+                            "type": "string",
+                            "maxLength": 32,
+                            "pattern": "^[a-z][a-z0-9_]*$"
+                          },
+                          "group": {
+                            "type": "string",
+                            "enum": [
+                              "person",
+                              "company",
+                              "email_verification"
+                            ]
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "enum": [
+                              "filled",
+                              "no_result",
+                              "failed",
+                              "skipped_disabled",
+                              "skipped_circuit_open",
+                              "skipped_budget"
+                            ]
+                          },
+                          "failure": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "enum": [
+                              "timeout",
+                              "rate_limited",
+                              "provider_error",
+                              "invalid_response",
+                              "key_rejected",
+                              null
+                            ]
+                          },
+                          "costMicros": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 1000000000000
+                          },
+                          "startedAt": {
+                            "type": "string",
+                            "maxLength": 64,
+                            "format": "date-time"
+                          },
+                          "durationMs": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 600000
+                          }
+                        },
+                        "required": [
+                          "provider",
+                          "group",
+                          "outcome",
+                          "failure",
+                          "costMicros",
+                          "startedAt",
+                          "durationMs"
+                        ]
+                      },
+                      "maxItems": 150
+                    },
+                    "fields": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "field": {
+                            "type": "string",
+                            "enum": [
+                              "firstName",
+                              "lastName",
+                              "jobTitle",
+                              "linkedinUrl",
+                              "email",
+                              "companyName",
+                              "companyDomain",
+                              "industry",
+                              "employeeCount",
+                              "region",
+                              "technologies"
+                            ]
+                          },
+                          "value": {
+                            "type": "string",
+                            "maxLength": 6400
+                          },
+                          "truncated": {
+                            "type": "boolean"
+                          },
+                          "provider": {
+                            "type": "string",
+                            "maxLength": 32,
+                            "pattern": "^[a-z][a-z0-9_]*$"
+                          },
+                          "confidence": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 100
+                          },
+                          "obtainedAt": {
+                            "type": "string",
+                            "maxLength": 64,
+                            "format": "date-time"
+                          },
+                          "costMicros": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 1000000000000
+                          },
+                          "application": {
+                            "type": "string",
+                            "enum": [
+                              "written",
+                              "suggested"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "field",
+                          "value",
+                          "truncated",
+                          "provider",
+                          "confidence",
+                          "obtainedAt",
+                          "costMicros",
+                          "application"
+                        ]
+                      },
+                      "maxItems": 11
+                    },
+                    "emailVerification": {
+                      "type": [
+                        "object",
+                        "null"
+                      ],
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "valid",
+                            "risky",
+                            "invalid"
+                          ]
+                        },
+                        "reason": {
+                          "type": "string",
+                          "enum": [
+                            "accepted",
+                            "catch_all",
+                            "role_based",
+                            "disposable",
+                            "mailbox_full",
+                            "mailbox_not_found",
+                            "domain_invalid",
+                            "unknown"
+                          ]
+                        },
+                        "provider": {
+                          "type": "string",
+                          "maxLength": 32,
+                          "pattern": "^[a-z][a-z0-9_]*$"
+                        },
+                        "checkedAt": {
+                          "type": "string",
+                          "maxLength": 64,
+                          "format": "date-time"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "reason",
+                        "provider",
+                        "checkedAt"
+                      ]
+                    },
+                    "costMicros": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1000000000000
+                    },
+                    "ceilingMicros": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1000000000000
+                    },
+                    "requestedByUserId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^usr_[0-9a-f]{32}$"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "maxLength": 64,
+                      "format": "date-time"
+                    },
+                    "startedAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "maxLength": 64,
+                      "format": "date-time"
+                    },
+                    "completedAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "maxLength": 64,
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "runSetId",
+                    "prospectId",
+                    "status",
+                    "stopReason",
+                    "groups",
+                    "attempts",
+                    "fields",
+                    "emailVerification",
+                    "costMicros",
+                    "ceilingMicros",
+                    "requestedByUserId",
+                    "createdAt",
+                    "startedAt",
+                    "completedAt"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "auth.unauthenticated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "auth.forbidden.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "enrichment.run_not_found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "server.internal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }

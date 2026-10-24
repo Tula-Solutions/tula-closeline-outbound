@@ -7,7 +7,7 @@ import { createTestDeps } from './testing'
 type ServedDocument = {
   openapi: string
   info: { title: string }
-  paths: Record<string, { get: { responses: Record<string, unknown> } }>
+  paths: Record<string, { get?: { responses: Record<string, unknown> } }>
 }
 
 test('the app serves its OpenAPI document describing every route and the error body', async () => {
@@ -19,10 +19,16 @@ test('the app serves its OpenAPI document describing every route and the error b
   const document = (await response.json()) as ServedDocument
   expect(document.openapi).toBe('3.1.0')
   expect(document.info.title).toBe(SERVICE)
-  expect(Object.keys(document.paths).sort()).toEqual(['/healthz', '/readyz'])
-  expect(document.paths['/healthz']?.get.responses['500']).toBeDefined()
-  expect(document.paths['/readyz']?.get.responses['503']).toBeDefined()
-  expect(JSON.stringify(document.paths['/healthz']?.get.responses['500'])).toContain('code')
+  expect(Object.keys(document.paths).sort()).toEqual([
+    '/healthz',
+    '/readyz',
+    '/v1/enrichment-run-sets/{runSetId}',
+    '/v1/enrichment-runs',
+    '/v1/enrichment-runs/{runId}',
+  ])
+  expect(document.paths['/healthz']?.get?.responses['500']).toBeDefined()
+  expect(document.paths['/readyz']?.get?.responses['503']).toBeDefined()
+  expect(JSON.stringify(document.paths['/healthz']?.get?.responses['500'])).toContain('code')
 })
 
 test('the document written by the script is the document the app serves', async () => {

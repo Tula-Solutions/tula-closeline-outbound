@@ -1,38 +1,239 @@
-import { createFixedClock, createLogger, type FixedClock } from 'tula-closeline-kit'
+import type { OpenAPIHono } from '@hono/zod-openapi'
+import { formatId, type OrganizationId, type Role, type UserId } from 'tula-closeline-contract'
+import {
+  createLogger,
+  createMemoryProcessedStore,
+  createStaticKeySet,
+  createTokenVerifier,
+  type FixedClock,
+  TokenVerificationError,
+  type TokenVerifier,
+} from 'tula-closeline-kit'
+import {
+  createMemoryErrorReporter,
+  createMemoryQueue,
+  createTestJwks,
+  createTestKeyPair,
+  createVirtualTime,
+  type MemoryErrorReporter,
+  type MemoryQueue,
+  type MintTokenOptions,
+  mintTestToken,
+  type VirtualTime,
+} from 'tula-closeline-kit/testing'
+import { createMemoryCore, type MemoryCore } from '~/adapters/memory/core'
+import { createMemoryProviderConfig } from '~/adapters/memory/provider-config'
+import type { MemoryProvider, MemoryVerifier } from '~/adapters/memory/providers'
+import { createMemoryEnrichmentStore } from '~/adapters/memory/store'
+import { createApp } from '~/app'
+import { createOutboundConsumer } from '~/consumer'
 import type { Container, ErrorContext, ReadinessCheck } from '~/container'
 import { loadEnv } from '~/env'
+import type { AppEnv } from '~/http/types'
 import { SERVICE } from '~/info'
+import { type OutboundDefinition, registry } from '~/messages'
+import { enrichmentHandlers } from '~/modules/enrichment/handlers'
+
+/** The issuer and audience the test environment's tokens carry. */
+const TEST_ISSUER = 'https://auth.test'
+const TEST_AUDIENCE = 'closeline'
 
 /** The container plus the observable side effects a test asserts on. */
 export type TestDeps = Container & {
   clock: FixedClock
+  /** Time that moves only when a test advances it; the queue, store and consumer share it. */
+  time: VirtualTime
+  queue: MemoryQueue<OutboundDefinition>
+  /** Core in memory: seed Prospects, read what enrichment wrote, count the calls. */
+  core: MemoryCore
+  /** The provider settings; a test sets them per Organization. */
+  config: ReturnType<typeof createMemoryProviderConfig>
+  /** The store in memory, to read spend. */
+  store: ReturnType<typeof createMemoryEnrichmentStore>
+  /** The kit's memory error reporter: what the consumer and the error handler would send to Sentry. */
+  errors: MemoryErrorReporter
   /** Every JSON log line written, in order. */
   logLines: string[]
   /** Every call to `reportError`, in order. */
   reported: { error: unknown; context: ErrorContext }[]
 }
 
-/** Builds a container of in-memory doubles and a fixed clock; `overrides` replace any field. */
-export function createTestDeps(
-  overrides: { readinessChecks?: readonly ReadinessCheck[]; env?: Record<string, string> } = {}
-): TestDeps {
+/** What a test may replace in {@link createTestDeps}. */
+export type TestDepsOverrides = {
+  readinessChecks?: readonly ReadinessCheck[]
+  env?: Record<string, string>
+  /** The access-token verifier; defaults to one that rejects every token. */
+  tokenVerifier?: TokenVerifier
+  /** The providers the waterfall may ask; none by default. */
+  providers?: readonly MemoryProvider[]
+  /** The email verifiers; none by default. */
+  verifiers?: readonly MemoryVerifier[]
+  /** Messages handled at once; defaults to the environment's setting. */
+  consumerConcurrency?: number
+}
+
+const REJECTING_VERIFIER: TokenVerifier = {
+  verify: async () => {
+    throw new TokenVerificationError('invalid')
+  },
+}
+
+/** Builds a container of in-memory doubles and virtual time; `overrides` replace any field. */
+export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
   const logLines: string[] = []
   const reported: TestDeps['reported'] = []
+  const time = createVirtualTime()
+  const errors = createMemoryErrorReporter()
+  const logger = createLogger({
+    service: SERVICE,
+    level: 'debug',
+    destination: { write: (line) => void logLines.push(line) },
+  })
+  const env = loadEnv({
+    ENVIRONMENT: 'local',
+    LOG_LEVEL: 'debug',
+    // Every key that is required outside local, so a test may set any ENVIRONMENT.
+    REGION: 'us',
+    SENTRY_DSN: 'https://public@sentry.test/1',
+    DATABASE_URL: 'postgres://closeline_outbound:closeline_outbound_local@127.0.0.1:5432/closeline',
+    AUTH_JWKS_URL: `${TEST_ISSUER}/.well-known/jwks.json`,
+    AUTH_ISSUER: TEST_ISSUER,
+    AUTH_AUDIENCE: TEST_AUDIENCE,
+    AWS_REGION: 'us-east-1',
+    QUEUE_URL: 'https://sqs.test/000000000000/outbound',
+    ...overrides.env,
+  })
+  const queue = createMemoryQueue({ registry, clock: time.clock, sleep: time.sleep })
+  const processed = createMemoryProcessedStore({ clock: time.clock })
+  const core = createMemoryCore()
+  const config = createMemoryProviderConfig()
+  const store = createMemoryEnrichmentStore()
+  const enrichment: Container['enrichment'] = {
+    store,
+    core: core.prospects,
+    access: core.access,
+    config,
+    providers: overrides.providers ?? [],
+    verifiers: overrides.verifiers ?? [],
+    queue,
+    clock: time.clock,
+    sleep: time.sleep,
+    random: () => 0.5,
+    logger,
+    limits: {
+      monthlyBudgetMicros: env.ENRICHMENT_MONTHLY_BUDGET_MICROS,
+      runCeilingMicros: env.ENRICHMENT_RUN_CEILING_MICROS,
+      providerTimeoutMs: env.ENRICHMENT_PROVIDER_TIMEOUT_MS,
+      providerMaxTries: env.ENRICHMENT_PROVIDER_MAX_TRIES,
+      retryBaseMs: env.ENRICHMENT_RETRY_BASE_MS,
+      runLeaseSeconds: env.ENRICHMENT_RUN_LEASE_SECONDS,
+    },
+  }
 
   return {
-    env: loadEnv({ ENVIRONMENT: 'local', LOG_LEVEL: 'debug', ...overrides.env }),
-    logger: createLogger({
-      service: SERVICE,
-      level: 'debug',
-      destination: { write: (line) => void logLines.push(line) },
+    env,
+    logger,
+    clock: time.clock,
+    time,
+    tokenVerifier: overrides.tokenVerifier ?? REJECTING_VERIFIER,
+    withOrganization: () => {
+      throw new Error('this test container has no database; use the integration harness')
+    },
+    queue,
+    processed,
+    enrichment,
+    core,
+    config,
+    store,
+    consumer: createOutboundConsumer({
+      queue,
+      store: processed,
+      logger,
+      errorReporter: errors,
+      handlers: enrichmentHandlers(enrichment),
+      concurrency: overrides.consumerConcurrency ?? env.CONSUMER_CONCURRENCY,
+      sleep: time.sleep,
     }),
-    clock: createFixedClock('2026-01-01T00:00:00Z'),
     readinessChecks: overrides.readinessChecks ?? [],
     lifecycle: { draining: false },
     reportError: (error, context) => {
       reported.push({ error, context })
     },
+    close: async () => undefined,
+    errors,
     logLines,
     reported,
+  }
+}
+
+/** Who a minted access token names. */
+export type TestIdentity = { userId: UserId; organizationId: OrganizationId; role: Role }
+
+/** A fresh user id, for a test that needs one nobody else has. */
+export function newUserId(): UserId {
+  return formatId('usr', crypto.randomUUID())
+}
+
+/** A fresh Organization id. */
+export function newOrganizationId(): OrganizationId {
+  return formatId('org', crypto.randomUUID())
+}
+
+/** The app, its container, and what a test needs to call it as someone. */
+export type TestApp = {
+  app: OpenAPIHono<AppEnv>
+  deps: TestDeps
+  /** The `Authorization` header of a valid access token for `identity`. */
+  bearer(identity: TestIdentity): Promise<{ authorization: string }>
+  /** A token signed by a key the service does not trust, for `identity`. */
+  bearerFromUnknownKey(identity: TestIdentity): Promise<{ authorization: string }>
+  /** A token signed by the trusted key with `claims` or an `audience` or `issuer` overridden. */
+  bearerWith(
+    identity: TestIdentity,
+    options: Pick<MintTokenOptions, 'audience' | 'issuer' | 'claims'>
+  ): Promise<{ authorization: string }>
+}
+
+/**
+ * The whole app over a fresh container, with a verifier that accepts the tokens `bearer` signs
+ * (a real Ed25519 key pair, verified the way production verifies) and nothing else.
+ */
+export async function createTestApp(overrides: TestDepsOverrides = {}): Promise<TestApp> {
+  const keyPair = await createTestKeyPair()
+  const strangerKeyPair = await createTestKeyPair('stranger')
+  // The verifier and the minted tokens read the deps' clock, whatever a test advances it to.
+  const holder: { deps?: TestDeps } = {}
+  const verifier = createTokenVerifier({
+    issuer: TEST_ISSUER,
+    audience: TEST_AUDIENCE,
+    keys: await createStaticKeySet(createTestJwks(keyPair)),
+    clock: { now: () => holder.deps?.clock.now() ?? new Date('2026-01-01T00:00:00Z') },
+  })
+  const deps = createTestDeps({ tokenVerifier: verifier, ...overrides })
+  holder.deps = deps
+  const mint = async (
+    pair: typeof keyPair,
+    identity: TestIdentity,
+    options: Pick<MintTokenOptions, 'audience' | 'issuer' | 'claims'> = {}
+  ) => ({
+    authorization: `Bearer ${await mintTestToken({
+      keyPair: pair,
+      clock: deps.clock,
+      ...options,
+      claims: {
+        sub: identity.userId,
+        org: identity.organizationId,
+        role: identity.role,
+        ...options.claims,
+      },
+    })}`,
+  })
+
+  return {
+    app: createApp(deps),
+    deps,
+    bearer: (identity) => mint(keyPair, identity),
+    bearerFromUnknownKey: (identity) => mint(strangerKeyPair, identity),
+    bearerWith: (identity, options) => mint(keyPair, identity, options),
   }
 }
