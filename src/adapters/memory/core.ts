@@ -5,12 +5,13 @@ import type {
   ProviderKey,
   UserId,
 } from 'tula-closeline-contract'
-import type {
-  AccessCaller,
-  CoreAccess,
-  CoreProspects,
-  EnrichmentInput,
-  FieldApplication,
+import {
+  type AccessCaller,
+  type CoreAccess,
+  CoreProspectNotFoundError,
+  type CoreProspects,
+  type EnrichmentInput,
+  type FieldApplication,
 } from '~/ports/core'
 import type { ProspectValues } from '~/ports/enrichment-provider'
 
@@ -119,7 +120,7 @@ export function createMemoryCore(): MemoryCore {
         writes += 1
         const found = find(organizationId, prospectId)
         if (found === undefined) {
-          throw new Error('prospect not found')
+          throw new CoreProspectNotFoundError()
         }
         const replay = found.replays.get(write.runId)
         if (replay !== undefined) {

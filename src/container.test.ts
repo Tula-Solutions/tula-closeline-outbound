@@ -133,3 +133,40 @@ test('the container wires the enrichment module to the queue and the limits of t
   expect(container.enrichment.queue).toBe(container.queue)
   await container.close()
 })
+
+test('enrichment reaches core over HTTP when CORE_URL is set, and in memory otherwise', async () => {
+  const seen: string[] = []
+  const server = Bun.serve({
+    port: 0,
+    hostname: '127.0.0.1',
+    fetch(request) {
+      seen.push(`${request.method} ${new URL(request.url).pathname}`)
+      return Response.json(
+        { error: { code: 'enrichment.prospect_not_found', message: 'no' } },
+        { status: 404 }
+      )
+    },
+  })
+  const organizationId = `org_${'a'.repeat(32)}` as never
+  const prospectId = `prs_${'b'.repeat(32)}` as never
+  try {
+    const remote = createContainer(
+      loadEnv({
+        ENVIRONMENT: 'local',
+        LOG_LEVEL: 'silent',
+        CORE_URL: `http://127.0.0.1:${server.port}`,
+        CORE_INTERNAL_SECRET: 'container-test-secret-0123456789-abcdef',
+      })
+    )
+    const local = createContainer(loadEnv({ ENVIRONMENT: 'local', LOG_LEVEL: 'silent' }))
+
+    expect(await remote.enrichment.core.getEnrichmentInput(organizationId, prospectId)).toBeNull()
+    expect(seen).toEqual([`GET /internal/v1/prospects/${prospectId}/enrichment-input`])
+    expect(await local.enrichment.core.getEnrichmentInput(organizationId, prospectId)).toBeNull()
+    expect(seen).toHaveLength(1)
+    await remote.close()
+    await local.close()
+  } finally {
+    server.stop(true)
+  }
+})

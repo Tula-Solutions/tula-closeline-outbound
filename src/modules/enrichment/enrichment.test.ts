@@ -9,6 +9,7 @@ import {
 } from 'tula-closeline-contract'
 import { createMemoryProvider, createMemoryVerifier } from '~/adapters/memory/providers'
 import * as Waterfall from '~/modules/enrichment/waterfall'
+import { CoreProspectNotFoundError } from '~/ports/core'
 import { ProviderError } from '~/ports/enrichment-provider'
 import type { ProviderSetting } from '~/ports/provider-config'
 import {
@@ -777,6 +778,58 @@ describe('idempotency across callers', () => {
 function nextMonthStart(now: Date): number {
   return Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)
 }
+
+describe('a Prospect core no longer has', () => {
+  test('a write-back that finds it gone ends the run incomplete instead of retrying the message', async () => {
+    const provider = createMemoryProvider({ key: key('alpha'), groups: ['person'] })
+    const w = await world({ providers: [provider], settings: [setting('alpha', 1)] })
+    const created = await w.post({ prospectIds: [w.prospectId], groups: ['person'] })
+    const [run] = await w.runsOf((created.body as { id: string }).id)
+    if (run === undefined) {
+      throw new Error('no run')
+    }
+    w.t.deps.core.prospects.writeEnrichedFields = async () => {
+      throw new CoreProspectNotFoundError()
+    }
+
+    await Waterfall.execute(w.t.deps.enrichment, w.organizationId, run.id)
+
+    const finished = await w.run(run.id)
+    expect(finished.status).toBe('incomplete')
+    expect(w.t.deps.core.writeCalls()).toBe(0)
+  })
+
+  test('a run that had already hit its ceiling keeps the stop when the Prospect is gone', async () => {
+    const first = createMemoryProvider({
+      key: key('alpha'),
+      groups: ['person', 'company'],
+      priceMicros: 8_000,
+      respond: async () => [{ field: 'jobTitle', value: 'CEO', confidence: 90 }],
+    })
+    const w = await world({
+      providers: [first],
+      settings: [setting('alpha', 1)],
+      ceiling: '10000',
+    })
+    const created = await w.post({ prospectIds: [w.prospectId], groups: ['person', 'company'] })
+    const [run] = await w.runsOf((created.body as { id: string }).id)
+    if (run === undefined) {
+      throw new Error('no run')
+    }
+    let attempted = 0
+    w.t.deps.core.prospects.writeEnrichedFields = async () => {
+      attempted += 1
+      throw new CoreProspectNotFoundError()
+    }
+
+    await Waterfall.execute(w.t.deps.enrichment, w.organizationId, run.id)
+
+    const finished = await w.run(run.id)
+    expect(attempted).toBe(1)
+    expect(finished.status).toBe('stopped')
+    expect(finished.stopReason).toBe('run_ceiling')
+  })
+})
 
 describe('the budget reservation', () => {
   test('a reservation left by a crash is taken back when the run is claimed again', async () => {

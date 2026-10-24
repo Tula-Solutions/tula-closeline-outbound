@@ -24,6 +24,8 @@ test('configuration falls back to defaults for everything but the environment', 
     ENRICHMENT_PROVIDER_MAX_TRIES: 2,
     ENRICHMENT_RETRY_BASE_MS: 200,
     ENRICHMENT_RUN_LEASE_SECONDS: 120,
+    CORE_CALL_TIMEOUT_MS: 5_000,
+    CORE_CALL_MAX_TRIES: 3,
   })
 })
 
@@ -86,4 +88,46 @@ test('the budget and the run ceiling are read in micro-dollars', () => {
 
   expect(env.ENRICHMENT_MONTHLY_BUDGET_MICROS).toBe(2_000_000)
   expect(env.ENRICHMENT_RUN_CEILING_MICROS).toBe(40_000)
+})
+
+const CORE_SECRET = 'core-shared-secret-0123456789-abcdefgh'
+
+test('a core address needs the shared secret, and the message never shows the secret', () => {
+  expect(() => loadEnv({ ENVIRONMENT: 'local', CORE_URL: 'http://127.0.0.1:3002' })).toThrow(
+    /CORE_INTERNAL_SECRET.*is required/s
+  )
+  const env = loadEnv({
+    ENVIRONMENT: 'local',
+    CORE_URL: 'http://127.0.0.1:3002',
+    CORE_INTERNAL_SECRET: CORE_SECRET,
+  })
+  expect(env.CORE_URL).toBe('http://127.0.0.1:3002')
+  expect(env.CORE_INTERNAL_SECRET).toBe(CORE_SECRET)
+})
+
+test.each([
+  ['a short secret', { CORE_INTERNAL_SECRET: 'short' }],
+  ['a secret with a space', { CORE_INTERNAL_SECRET: `${CORE_SECRET} x` }],
+  ['an address that is not a URL', { CORE_URL: 'core' }],
+  ['a zero call timeout', { CORE_CALL_TIMEOUT_MS: '0' }],
+  ['no call tries at all', { CORE_CALL_MAX_TRIES: '0' }],
+])('configuration rejects %s for core at boot', (_name, source) => {
+  const attempt = () =>
+    loadEnv({
+      ENVIRONMENT: 'local',
+      CORE_URL: 'http://127.0.0.1:3002',
+      CORE_INTERNAL_SECRET: CORE_SECRET,
+      ...source,
+    })
+  expect(attempt).toThrow()
+  try {
+    attempt()
+  } catch (error) {
+    expect(String(error)).not.toContain(CORE_SECRET)
+  }
+})
+
+test('outside local, the core address and the shared secret are required, by name', () => {
+  expect(() => loadEnv({ ENVIRONMENT: 'prod' })).toThrow(/CORE_URL.*is required/s)
+  expect(() => loadEnv({ ENVIRONMENT: 'prod' })).toThrow(/CORE_INTERNAL_SECRET.*is required/s)
 })

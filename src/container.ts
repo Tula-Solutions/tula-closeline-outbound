@@ -18,6 +18,7 @@ import {
 } from 'tula-closeline-kit'
 import { type Consumer, createSqsQueue } from 'tula-closeline-kit/queue'
 import { createMemoryQueue } from 'tula-closeline-kit/testing'
+import { createHttpCoreProspects } from '~/adapters/http/core'
 import { createMemoryCore } from '~/adapters/memory/core'
 import { createPostgresProviderConfig } from '~/adapters/postgres/provider-config'
 import { createPostgresEnrichmentStore } from '~/adapters/postgres/store'
@@ -127,8 +128,9 @@ const unconfiguredVault: CredentialVault = { open: async () => null }
 
 /**
  * The single composition root: the only place adapters and process-wide objects are constructed.
- * Core and the providers are memory adapters until the HTTP adapter and vendor adapters exist, so
- * outside `local` the service warns that enrichment is not wired to real ones.
+ * Core's Prospect read and write-back use the HTTP adapter outside `local` or whenever `CORE_URL`
+ * is set, the memory one otherwise. Core's access check and the providers are still memory
+ * adapters until their real ones exist, so outside `local` the service warns about those.
  */
 export function createContainer(env: Env = loadEnv(), options: ContainerOptions = {}): Container {
   const logger = createLogger({
@@ -155,7 +157,7 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
   })
   if (env.ENVIRONMENT !== 'local') {
     logger.warn('ports still on fakes', {
-      ports: ['core', 'enrichment providers', 'email verifiers'],
+      ports: ['core access check', 'enrichment providers', 'email verifiers'],
     })
   }
   const inOrganization: Container['withOrganization'] = (organizationId, fn) =>
@@ -163,9 +165,22 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
   const queue = createQueue(env)
   const processed = createMemoryProcessedStore({ clock: systemClock })
   const core = createMemoryCore()
+  const coreHttp =
+    env.ENVIRONMENT !== 'local' || env.CORE_URL !== undefined
+      ? createHttpCoreProspects({
+          // The env schema guarantees both are set in this case.
+          baseUrl: env.CORE_URL as string,
+          secret: env.CORE_INTERNAL_SECRET as string,
+          environment: env.ENVIRONMENT,
+          timeoutMs: env.CORE_CALL_TIMEOUT_MS,
+          maxAttempts: env.CORE_CALL_MAX_TRIES,
+          retryBaseMs: env.ENRICHMENT_RETRY_BASE_MS,
+          logger,
+        })
+      : undefined
   const enrichment: EnrichmentDeps = {
     store: createPostgresEnrichmentStore(inOrganization),
-    core: core.prospects,
+    core: coreHttp ?? core.prospects,
     access: core.access,
     config: createPostgresProviderConfig(inOrganization, unconfiguredVault),
     providers: [],
@@ -222,6 +237,7 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
       errors.capture(error, context)
     },
     close: async () => {
+      coreHttp?.close()
       await errors.close(REPORTER_CLOSE_MS)
       await database.close()
     },
