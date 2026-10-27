@@ -9,6 +9,8 @@ import {
   mailboxParamsSchema,
   mailboxSchema,
   startMailboxConnectRequestSchema,
+  testSendRequestSchema,
+  testSendResultSchema,
 } from 'tula-closeline-contract'
 import { type AuthedEnv, callerOf } from '~/http/auth'
 import { domainError } from '~/http/domain-error'
@@ -119,6 +121,30 @@ const disconnectRoute = createRoute({
   },
 })
 
+const testSendRoute = createRoute({
+  ...contractRoute('testSendMailbox'),
+  middleware: requireRoles('testSendMailbox'),
+  tags: ['mailboxes'],
+  summary: 'Send a test email through a Mailbox',
+  security: [{ [PUBLIC_SECURITY]: [] }],
+  request: {
+    params: mailboxParamsSchema,
+    headers: keyHeader,
+    body: {
+      required: true,
+      content: { 'application/json': { schema: testSendRequestSchema } },
+    },
+  },
+  responses: {
+    200: {
+      description:
+        'The provider accepted the test email; a repeat under the same key answers the same.',
+      content: { 'application/json': { schema: testSendResultSchema } },
+    },
+    ...failureResponses('testSendMailbox'),
+  },
+})
+
 /** The Mailbox routes under `/v1`. */
 export function createMailboxRouter(deps: MailboxDeps): OpenAPIHono<AuthedEnv> {
   const router = createRouter<AuthedEnv>()
@@ -149,6 +175,18 @@ export function createMailboxRouter(deps: MailboxDeps): OpenAPIHono<AuthedEnv> {
   })
   router.openapi(disconnectRoute, async (c) =>
     c.json(await Mailboxes.disconnect(deps, callerOf(c), c.req.valid('param').mailboxId), 200)
+  )
+  router.openapi(testSendRoute, async (c) =>
+    c.json(
+      await Mailboxes.testSend(
+        deps,
+        callerOf(c),
+        c.req.valid('param').mailboxId,
+        c.req.valid('json'),
+        c.req.header('idempotency-key') ?? ''
+      ),
+      200
+    )
   )
   return router
 }

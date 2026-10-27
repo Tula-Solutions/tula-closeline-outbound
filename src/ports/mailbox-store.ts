@@ -8,6 +8,7 @@ import type {
   MembershipId,
   OrganizationId,
   TeamId,
+  UserId,
 } from 'tula-closeline-contract'
 
 /** A Mailbox as stored: everything but its tokens. The ramp and effective limits are computed from it. */
@@ -70,6 +71,19 @@ export type ConnectResult =
   | { kind: 'connected'; record: MailboxRecord }
   | { kind: 'already_connected' }
 
+/** A connect attempt as stored: only the hash of its `state`, never the state itself. */
+export type StoredAttempt = {
+  id: string
+  userId: UserId
+  /** SHA-256 of the `state`, 64 hex characters. */
+  stateHash: string
+  createdAt: string
+  expiresAt: string
+}
+
+/** A test send as stored: what the provider answered for one Idempotency-Key. */
+export type StoredTestSend = { providerMessageId: string; sentAt: string }
+
 /** The store of Mailboxes and their sealed tokens; every call is scoped to one Organization. */
 export type MailboxStore = {
   /**
@@ -114,4 +128,31 @@ export type MailboxStore = {
     reason: 'disconnected_by_owner' | 'auth_revoked',
     at: string
   ) => Promise<{ record: MailboxRecord; changed: boolean } | null>
+  /** Records a connect attempt; a repeat of the same `stateHash` changes nothing. */
+  registerAttempt: (organizationId: OrganizationId, attempt: StoredAttempt) => Promise<void>
+  /**
+   * Uses an attempt up: true once for a registered, unexpired, unused attempt of this user, false
+   * for every later call and for any other state.
+   */
+  consumeAttempt: (
+    organizationId: OrganizationId,
+    userId: UserId,
+    stateHash: string,
+    at: string
+  ) => Promise<boolean>
+  /** The test send already made under this key hash, or null. */
+  findTestSend: (
+    organizationId: OrganizationId,
+    id: MailboxId,
+    keyHash: string
+  ) => Promise<StoredTestSend | null>
+  /** How many test sends the Mailbox made at or after `since`. */
+  countTestSends: (organizationId: OrganizationId, id: MailboxId, since: string) => Promise<number>
+  /** Records a test send; if the key hash already has one, that one is kept and returned. */
+  recordTestSend: (
+    organizationId: OrganizationId,
+    id: MailboxId,
+    keyHash: string,
+    send: StoredTestSend
+  ) => Promise<StoredTestSend>
 }

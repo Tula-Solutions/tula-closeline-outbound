@@ -3,6 +3,7 @@ import {
   ERRORS,
   type ErrorDefinition,
   encodeCursor,
+  formatId,
   type ListMailboxesQuery,
   MAIL_ERRORS,
   MAILBOX_RAMP_STEPS,
@@ -15,11 +16,13 @@ import {
   type OrganizationId,
   type Role,
   type StartMailboxConnectRequest,
+  type TestSendRequest,
+  type TestSendResult,
   type UserId,
 } from 'tula-closeline-contract'
 import type { AppError } from 'tula-closeline-kit'
 import { describeError } from '~/describe-error'
-import { domainError } from '~/http/domain-error'
+import { domainError, RetryAfterError } from '~/http/domain-error'
 import { MailTransportError, type OutgoingMessage, type SentMessage } from '~/ports/mail-transport'
 import type { MailboxFilter, MailboxRecord, StoredTokens } from '~/ports/mailbox-store'
 import type { SecretContext } from '~/ports/secret-box'
@@ -31,6 +34,7 @@ import {
   mailboxIdOf,
   newAttempt,
   signAttempt,
+  stateHashOf,
   verifyAttempt,
 } from './oauth-state'
 
@@ -209,6 +213,13 @@ export async function startConnect(
   const attempt = newAttempt(caller, idempotencyKey, body, now)
   const state = signAttempt(deps.stateSecret, caller, attempt)
   const verifier = codeVerifierOf(deps.stateSecret, caller, attempt.nonce)
+  await deps.store.registerAttempt(caller.organizationId, {
+    id: formatId('mca', crypto.randomUUID().replaceAll('-', '')),
+    userId: caller.userId,
+    stateHash: stateHashOf(state),
+    createdAt: deps.clock.now().toISOString(),
+    expiresAt: new Date(attempt.expiresAt * 1000).toISOString(),
+  })
   return {
     authorizationUrl: transport.authorizationUrl({ state, codeChallenge: challengeOf(verifier) }),
     expiresAt: new Date(attempt.expiresAt * 1000).toISOString(),
@@ -285,6 +296,17 @@ export async function completeConnect(
   }
   if (attempt.kind === 'shared' && caller.role !== 'owner' && caller.role !== 'admin') {
     throw domainError(ERRORS['auth.forbidden'])
+  }
+  // shortcut: the link is burned before the exchange, so a transient provider failure means starting the connect again; release the attempt on a transient failure if that annoys users.
+  // The link is single-use: the first completion burns it, a second one (even after a reconnect) is refused.
+  const unused = await deps.store.consumeAttempt(
+    caller.organizationId,
+    caller.userId,
+    stateHashOf(body.state),
+    nowDate.toISOString()
+  )
+  if (!unused) {
+    throw mailError('mailbox.oauth_state_invalid')
   }
   const { me } = await viewOf(deps, caller)
   let granted: Awaited<ReturnType<typeof transport.exchangeCode>>
@@ -524,4 +546,63 @@ export async function sendThrough(
     }
     throw error instanceof MailTransportError ? transportFailure(error) : error
   }
+}
+
+/** How many test sends one Mailbox may make in an hour. */
+export const TEST_SENDS_PER_HOUR = 5
+
+const TEST_SEND_WINDOW_MS = 3_600_000
+const TEST_SEND_SUBJECT = 'Closeline test email'
+const TEST_SEND_TEXT =
+  'This is a test email from Closeline to check that your Mailbox can send. No reply is needed.'
+
+/** Sends one fixed test email through a Mailbox the caller owns (or any, for an Owner or Admin). */
+export async function testSend(
+  deps: MailboxDeps,
+  caller: MailboxCaller,
+  id: MailboxId,
+  body: TestSendRequest,
+  idempotencyKey: string
+): Promise<TestSendResult> {
+  const { record, view } = await loadVisible(deps, caller, id)
+  const mayAll = caller.role === 'owner' || caller.role === 'admin'
+  if (!mayAll && record.ownerMembershipId !== view.me) {
+    throw domainError(ERRORS['auth.forbidden'])
+  }
+  const keyHash = Buffer.from(
+    new Bun.CryptoHasher('sha256').update(idempotencyKey).digest()
+  ).toString('hex')
+  const done = await deps.store.findTestSend(caller.organizationId, id, keyHash)
+  if (done !== null) {
+    return done
+  }
+  if (record.state === 'disconnected') {
+    throw mailError(
+      record.stateReason === 'auth_revoked' ? 'mailbox.auth_revoked' : 'mailbox.not_connected'
+    )
+  }
+  if (record.state === 'paused' || record.health.effect === 'paused') {
+    throw mailError('mailbox.paused')
+  }
+  const now = deps.clock.now()
+  const recent = await deps.store.countTestSends(
+    caller.organizationId,
+    id,
+    new Date(now.getTime() - TEST_SEND_WINDOW_MS).toISOString()
+  )
+  if (recent >= TEST_SENDS_PER_HOUR) {
+    throw new RetryAfterError(ERRORS['rate.limited'], TEST_SEND_WINDOW_MS / 1000)
+  }
+  // shortcut: the key alone decides a replay (a reused key with another `to` answers the first result), and failed sends are not counted toward the cap; store a request hash and a reservation row to close both.
+  // shortcut: two requests with the same new key at the same instant can both send (the provider id is only known after the send); add a reservation row if that matters.
+  const sent = await sendThrough(deps, caller.organizationId, id, {
+    from: { address: record.address, name: record.displayName },
+    to: body.to,
+    subject: body.subject ?? TEST_SEND_SUBJECT,
+    text: TEST_SEND_TEXT,
+  })
+  return deps.store.recordTestSend(caller.organizationId, id, keyHash, {
+    providerMessageId: sent.providerMessageId,
+    sentAt: now.toISOString(),
+  })
 }

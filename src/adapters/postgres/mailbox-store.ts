@@ -1,7 +1,12 @@
-import { and, asc, eq, gt, inArray, isNotNull, or, sql } from 'drizzle-orm'
+import { and, asc, eq, gt, gte, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm'
 import type { SendWindow } from 'tula-closeline-contract'
 import type { Transaction } from 'tula-closeline-db'
-import { mailboxes, mailboxLimits } from 'tula-closeline-db/schema'
+import {
+  mailboxConnectAttempts,
+  mailboxes,
+  mailboxLimits,
+  mailboxTestSends,
+} from 'tula-closeline-db/schema'
 import type { MailboxRecord, MailboxStore, StoredTokens } from '~/ports/mailbox-store'
 import type { InOrganization } from './store'
 
@@ -75,6 +80,25 @@ async function loadRecord(tx: Transaction, organizationId: string, id: string) {
     )
     .where(and(eq(mailboxes.organizationId, organizationId), eq(mailboxes.id, id)))
   return row === undefined ? null : recordOf(row.mailbox, row.limits)
+}
+
+async function findTestSend(tx: Transaction, organizationId: string, id: string, keyHash: string) {
+  const [row] = await tx
+    .select({
+      providerMessageId: mailboxTestSends.providerMessageId,
+      sentAt: mailboxTestSends.sentAt,
+    })
+    .from(mailboxTestSends)
+    .where(
+      and(
+        eq(mailboxTestSends.organizationId, organizationId),
+        eq(mailboxTestSends.mailboxId, id),
+        eq(mailboxTestSends.keyHash, keyHash)
+      )
+    )
+  return row === undefined
+    ? null
+    : { providerMessageId: row.providerMessageId, sentAt: row.sentAt.toISOString() }
 }
 
 function limitColumns(record: MailboxRecord) {
@@ -307,6 +331,77 @@ export function createPostgresMailboxStore(inOrganization: InOrganization): Mail
           throw new Error('mailbox vanished inside its own transaction')
         }
         return { record, changed: true }
+      }),
+
+    registerAttempt: (organizationId, attempt) =>
+      inOrganization(organizationId, async (tx) => {
+        await tx
+          .insert(mailboxConnectAttempts)
+          .values({
+            id: attempt.id,
+            organizationId,
+            userId: attempt.userId,
+            stateHash: attempt.stateHash,
+            createdAt: new Date(attempt.createdAt),
+            expiresAt: new Date(attempt.expiresAt),
+          })
+          .onConflictDoNothing()
+      }),
+
+    consumeAttempt: (organizationId, userId, stateHash, at) =>
+      inOrganization(organizationId, async (tx) => {
+        const when = new Date(at)
+        const used = await tx
+          .update(mailboxConnectAttempts)
+          .set({ consumedAt: when })
+          .where(
+            and(
+              eq(mailboxConnectAttempts.organizationId, organizationId),
+              eq(mailboxConnectAttempts.stateHash, stateHash),
+              eq(mailboxConnectAttempts.userId, userId),
+              isNull(mailboxConnectAttempts.consumedAt),
+              gt(mailboxConnectAttempts.expiresAt, when)
+            )
+          )
+          .returning({ id: mailboxConnectAttempts.id })
+        return used.length > 0
+      }),
+
+    findTestSend: (organizationId, id, keyHash) =>
+      inOrganization(organizationId, (tx) => findTestSend(tx, organizationId, id, keyHash)),
+
+    countTestSends: (organizationId, id, since) =>
+      inOrganization(organizationId, async (tx) => {
+        const [row] = await tx
+          .select({ n: sql<number>`count(*)::int` })
+          .from(mailboxTestSends)
+          .where(
+            and(
+              eq(mailboxTestSends.organizationId, organizationId),
+              eq(mailboxTestSends.mailboxId, id),
+              gte(mailboxTestSends.sentAt, new Date(since))
+            )
+          )
+        return row?.n ?? 0
+      }),
+
+    recordTestSend: (organizationId, id, keyHash, send) =>
+      inOrganization(organizationId, async (tx) => {
+        await tx
+          .insert(mailboxTestSends)
+          .values({
+            organizationId,
+            mailboxId: id,
+            keyHash,
+            providerMessageId: send.providerMessageId,
+            sentAt: new Date(send.sentAt),
+          })
+          .onConflictDoNothing()
+        const kept = await findTestSend(tx, organizationId, id, keyHash)
+        if (kept === null) {
+          throw new Error('test send vanished inside its own transaction')
+        }
+        return kept
       }),
   }
 }

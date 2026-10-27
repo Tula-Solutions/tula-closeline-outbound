@@ -8,6 +8,7 @@ export type MailboxRouteName =
   | 'startMailboxConnect'
   | 'completeMailboxConnect'
   | 'disconnectMailbox'
+  | 'testSendMailbox'
 
 const ALL_ERRORS: Record<string, { code: string; status: number }> = { ...ERRORS, ...MAIL_ERRORS }
 

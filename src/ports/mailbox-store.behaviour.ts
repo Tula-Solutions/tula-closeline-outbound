@@ -4,6 +4,7 @@ import {
   type MailboxId,
   type MembershipId,
   type OrganizationId,
+  type UserId,
 } from 'tula-closeline-contract'
 import type { MailboxRecord, MailboxStore, StoredTokens } from './mailbox-store'
 
@@ -216,6 +217,58 @@ export function describeMailboxStore(label: string, make: () => MailboxStore): v
         newStoredTokens()
       )
       expect(other.kind).toBe('connected')
+    })
+
+    test('a connect attempt is used once, by its user, before it expires', async () => {
+      const store = make()
+      const a = org()
+      const user = formatId('usr', crypto.randomUUID()) as UserId
+      const attempt = {
+        id: formatId('mca', crypto.randomUUID()),
+        userId: user,
+        stateHash: 'a'.repeat(64),
+        createdAt: '2026-01-01T00:00:00.000Z',
+        expiresAt: '2026-01-01T00:10:00.000Z',
+      }
+      const at = '2026-01-01T00:05:00.000Z'
+      await store.registerAttempt(a, attempt)
+      await store.registerAttempt(a, attempt)
+      expect(await store.consumeAttempt(a, user, 'b'.repeat(64), at)).toBe(false)
+      expect(await store.consumeAttempt(org(), user, attempt.stateHash, at)).toBe(false)
+      expect(
+        await store.consumeAttempt(
+          a,
+          formatId('usr', crypto.randomUUID()) as UserId,
+          attempt.stateHash,
+          at
+        )
+      ).toBe(false)
+      expect(
+        await store.consumeAttempt(a, user, attempt.stateHash, '2026-01-01T00:10:00.000Z')
+      ).toBe(false)
+      expect(await store.consumeAttempt(a, user, attempt.stateHash, at)).toBe(true)
+      expect(await store.consumeAttempt(a, user, attempt.stateHash, at)).toBe(false)
+    })
+
+    test('test sends are found by key, counted by window and kept on a repeat', async () => {
+      const store = make()
+      const a = org()
+      const record = newMailboxRecord()
+      await store.connect(a, record, newStoredTokens())
+      const key = 'c'.repeat(64)
+      expect(await store.findTestSend(a, record.id, key)).toBeNull()
+      const first = { providerMessageId: 'm1', sentAt: '2026-01-01T10:00:00.000Z' }
+      expect(await store.recordTestSend(a, record.id, key, first)).toEqual(first)
+      const kept = await store.recordTestSend(a, record.id, key, {
+        providerMessageId: 'm2',
+        sentAt: '2026-01-01T10:30:00.000Z',
+      })
+      expect(kept).toEqual(first)
+      expect(await store.findTestSend(a, record.id, key)).toEqual(first)
+      expect(await store.findTestSend(org(), record.id, key)).toBeNull()
+      expect(await store.countTestSends(a, record.id, '2026-01-01T09:00:00.000Z')).toBe(1)
+      expect(await store.countTestSends(a, record.id, '2026-01-01T10:00:01.000Z')).toBe(0)
+      expect(await store.countTestSends(org(), record.id, '2026-01-01T09:00:00.000Z')).toBe(0)
     })
   })
 }

@@ -319,3 +319,114 @@ describe('sending through a Mailbox', () => {
     expect(MailTransportError).toBeDefined()
   })
 })
+
+describe('a connect link is used once', () => {
+  test('a link whose completion already ran is burned, even if that run failed', async () => {
+    const w = await world()
+    const { completion } = await w.start(w.rep)
+    w.t.deps.mail.failProvider(1)
+    const failed = await w.call('POST', '/v1/mailboxes/connect/complete', w.rep, completion)
+    expect(codeOf(failed.body)).toBe('server.unavailable')
+    const retry = await w.call('POST', '/v1/mailboxes/connect/complete', w.rep, completion)
+    expect(codeOf(retry.body)).toBe('mailbox.oauth_state_invalid')
+  })
+
+  test('a link that was never started here is refused', async () => {
+    const w = await world()
+    const { completion } = await w.start(w.rep)
+    const fresh = await world()
+    const done = await fresh.call('POST', '/v1/mailboxes/connect/complete', fresh.rep, completion)
+    expect(codeOf(done.body)).toBe('mailbox.oauth_state_invalid')
+  })
+})
+
+describe('test send', () => {
+  const path = (id: unknown) => `/v1/mailboxes/${id}/test-send`
+
+  test('sends the fixed text from the Mailbox and replays under the same key', async () => {
+    const w = await world()
+    const mailbox = await w.connect(w.rep)
+    const first = await w.call(
+      'POST',
+      path(mailbox.id),
+      w.rep,
+      { to: 'me@example.com' },
+      'test-send-key-0001'
+    )
+    expect(first.status).toBe(200)
+    expect(first.body.providerMessageId).toBeTruthy()
+    const accepted = w.t.deps.mail.accepted()
+    expect(accepted).toHaveLength(1)
+    expect(accepted[0]).toMatchObject({
+      to: 'me@example.com',
+      from: { address: mailbox.address },
+    })
+    const again = await w.call(
+      'POST',
+      path(mailbox.id),
+      w.rep,
+      { to: 'me@example.com' },
+      'test-send-key-0001'
+    )
+    expect(again.status).toBe(200)
+    expect(again.body).toEqual(first.body)
+    expect(w.t.deps.mail.accepted()).toHaveLength(1)
+  })
+
+  test('a custom subject is used', async () => {
+    const w = await world()
+    const mailbox = await w.connect(w.rep)
+    await w.call('POST', path(mailbox.id), w.rep, { to: 'me@example.com', subject: 'Hi' })
+    expect(w.t.deps.mail.accepted()[0]?.subject).toBe('Hi')
+  })
+
+  test('another Organization and another Rep cannot use it', async () => {
+    const w = await world()
+    const mailbox = await w.connect(w.rep)
+    const stranger = w.who('owner', newOrganizationId())
+    const foreign = await w.call('POST', path(mailbox.id), stranger, { to: 'a@example.com' })
+    expect(codeOf(foreign.body)).toBe('mailbox.not_found')
+    const peer = await w.call('POST', path(mailbox.id), w.otherRep, { to: 'a@example.com' })
+    expect(codeOf(peer.body)).toBe('mailbox.not_found')
+    const manager = await w.call('POST', path(mailbox.id), w.manager, { to: 'a@example.com' })
+    expect(manager.status).toBe(403)
+    expect(w.t.deps.mail.accepted()).toHaveLength(0)
+    const admin = await w.call('POST', path(mailbox.id), w.admin, { to: 'a@example.com' })
+    expect(admin.status).toBe(200)
+  })
+
+  test('a disconnected Mailbox is not connected, a revoked one is auth_revoked', async () => {
+    const w = await world()
+    const mailbox = await w.connect(w.rep)
+    await w.call('DELETE', `/v1/mailboxes/${mailbox.id}`, w.rep)
+    const gone = await w.call('POST', path(mailbox.id), w.rep, { to: 'a@example.com' })
+    expect(codeOf(gone.body)).toBe('mailbox.not_connected')
+    const other = await w.connect(w.rep, { provider: 'gmail' })
+    const Mailboxes = await import('./service')
+    await w.t.deps.mailboxes.store.disconnect(
+      w.org,
+      other.id as never,
+      'auth_revoked',
+      new Date().toISOString()
+    )
+    void Mailboxes
+    const revoked = await w.call('POST', path(other.id), w.rep, { to: 'a@example.com' })
+    expect(codeOf(revoked.body)).toBe('mailbox.auth_revoked')
+  })
+
+  test('is rate limited per Mailbox, with Retry-After, and the window slides', async () => {
+    const w = await world()
+    const mailbox = await w.connect(w.rep)
+    const { TEST_SENDS_PER_HOUR } = await import('./service')
+    for (let i = 0; i < TEST_SENDS_PER_HOUR; i++) {
+      const ok = await w.call('POST', path(mailbox.id), w.rep, { to: 'a@example.com' })
+      expect(ok.status).toBe(200)
+    }
+    const over = await w.call('POST', path(mailbox.id), w.rep, { to: 'a@example.com' })
+    expect(over.status).toBe(429)
+    expect(codeOf(over.body)).toBe('rate.limited')
+    await w.t.deps.time.advance(61 * 60 * 1000)
+    const later = await w.call('POST', path(mailbox.id), w.rep, { to: 'a@example.com' })
+    expect(later.status).toBe(200)
+  })
+})

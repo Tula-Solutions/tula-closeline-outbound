@@ -3,6 +3,8 @@ import type {
   MailboxFilter,
   MailboxRecord,
   MailboxStore,
+  StoredAttempt,
+  StoredTestSend,
   StoredTokens,
 } from '~/ports/mailbox-store'
 
@@ -31,6 +33,8 @@ function matches(record: MailboxRecord, filter: MailboxFilter): boolean {
 /** An in-process {@link MailboxStore} for tests and local runs without Postgres. */
 export function createMemoryMailboxStore(): MailboxStore {
   const entries = new Map<string, Entry>()
+  const attempts = new Map<string, StoredAttempt & { consumedAt: string | null }>()
+  const testSends = new Map<string, StoredTestSend>()
   const key = (organizationId: OrganizationId, id: MailboxId) => `${organizationId}/${id}`
   const inOrg = (organizationId: OrganizationId) =>
     [...entries.entries()]
@@ -113,6 +117,44 @@ export function createMemoryMailboxStore(): MailboxStore {
         stateChangedAt: at,
       }
       return { record: entry.record, changed: true }
+    },
+
+    async registerAttempt(organizationId, attempt) {
+      const k = `${organizationId}/${attempt.stateHash}`
+      if (!attempts.has(k)) {
+        attempts.set(k, { ...attempt, consumedAt: null })
+      }
+    },
+
+    async consumeAttempt(organizationId, userId, stateHash, at) {
+      const attempt = attempts.get(`${organizationId}/${stateHash}`)
+      if (
+        attempt === undefined ||
+        attempt.userId !== userId ||
+        attempt.consumedAt !== null ||
+        attempt.expiresAt <= at
+      ) {
+        return false
+      }
+      attempt.consumedAt = at
+      return true
+    },
+
+    async findTestSend(organizationId, id, keyHash) {
+      return testSends.get(`${organizationId}/${id}/${keyHash}`) ?? null
+    },
+
+    async countTestSends(organizationId, id, since) {
+      return [...testSends.entries()].filter(
+        ([k, v]) => k.startsWith(`${organizationId}/${id}/`) && v.sentAt >= since
+      ).length
+    },
+
+    async recordTestSend(organizationId, id, keyHash, send) {
+      const k = `${organizationId}/${id}/${keyHash}`
+      const kept = testSends.get(k) ?? send
+      testSends.set(k, kept)
+      return kept
     },
   }
 }

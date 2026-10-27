@@ -12,7 +12,6 @@ import {
 /** The most Teams a shared Mailbox may be opened to in one connect attempt (the state must stay short). */
 export const MAX_ATTEMPT_TEAMS = 8
 
-// shortcut: a sign-in link is not single-use, it works until it expires; add a mailbox_connect_attempts table (db ticket) to burn the nonce on first use. The same table fixes replaying a completion after a reconnect, which re-exchanges the used code and answers mailbox.oauth_state_invalid.
 /** How long a connect attempt lasts, in seconds. */
 export const ATTEMPT_TTL_SECONDS = 600
 
@@ -150,4 +149,9 @@ export function mailboxIdOf(organizationId: OrganizationId, nonce: string): Mail
     'mbx',
     sha256(`${organizationId}|mailbox|${nonce}`).subarray(0, 16).toString('hex')
   )
+}
+
+/** The hash the store keeps for an attempt, so a stored row never holds the `state` itself. */
+export function stateHashOf(state: string): string {
+  return sha256(state).toString('hex')
 }
