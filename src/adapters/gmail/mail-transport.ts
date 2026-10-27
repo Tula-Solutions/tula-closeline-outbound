@@ -39,6 +39,8 @@ export type GmailMailTransportOptions = {
   sleep?: (ms: number) => Promise<void>
   /** Returns a number in [0, 1); used for jitter. */
   random?: () => number
+  /** The clock token expiry is measured from; defaults to the system clock. */
+  now?: () => Date
 }
 
 type Outcome = { status: number; body: unknown }
@@ -224,7 +226,8 @@ export function createGmailMailTransport(options: GmailMailTransportOptions): Ma
         ? (body as { expires_in?: unknown }).expires_in
         : undefined
     return new Date(
-      Date.now() + (typeof seconds === 'number' && seconds > 0 ? seconds : 3600) * 1000
+      (options.now ?? (() => new Date()))().getTime() +
+        (typeof seconds === 'number' && seconds > 0 ? seconds : 3600) * 1000
     ).toISOString()
   }
 

@@ -252,6 +252,18 @@ describe('gmail adapter', () => {
     })
   })
 
+  test('the access token expires expires_in seconds after the injected clock', async () => {
+    const transport = createGmailMailTransport({
+      ...BASE,
+      fetch: async () => json('token.json'),
+      now: () => new Date('2030-01-01T00:00:00.000Z'),
+    })
+    const { tokens } = await transport.exchangeCode({ code: 'c', codeVerifier: 'v' })
+    expect(tokens.expiresAt).toBe(
+      new Date(Date.parse('2030-01-01T00:00:00.000Z') + 3599_000).toISOString()
+    )
+  })
+
   test('errors never carry the client secret, a token or the provider body', async () => {
     const transport = createGmailMailTransport({
       ...BASE,

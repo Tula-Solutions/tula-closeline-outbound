@@ -12,6 +12,7 @@ import {
 /** The most Teams a shared Mailbox may be opened to in one connect attempt (the state must stay short). */
 export const MAX_ATTEMPT_TEAMS = 8
 
+// shortcut: a sign-in link is not single-use, it works until it expires; add a mailbox_connect_attempts table (db ticket) to burn the nonce on first use. The same table fixes replaying a completion after a reconnect, which re-exchanges the used code and answers mailbox.oauth_state_invalid.
 /** How long a connect attempt lasts, in seconds. */
 export const ATTEMPT_TTL_SECONDS = 600
 
