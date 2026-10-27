@@ -8751,6 +8751,3013 @@
           }
         }
       }
+    },
+    "/v1/mailboxes": {
+      "get": {
+        "description": "Lists Mailboxes, oldest connection first, one cursor-paginated page at a time (at most 100), optionally narrowed by state, provider, kind and owner. Each shows its owner, state and reason, the limits set, the limits that apply now after the ramp and its health, the ramp, and a health summary. A filter never widens what the caller may see. No response, event, log line or error report carries a token, refresh token, authorization code, client secret or key of a Mailbox, and no message body or subject. An Owner or Admin sees every Mailbox; a Manager sees those of the Reps on their Team and the shared ones opened to it; a Rep sees only their own and the shared ones opened to their Team. A Mailbox or send record outside the caller's view is mailbox.not_found or send.not_found (404), never 403, and one of another Organization the same.",
+        "tags": [
+          "mailboxes"
+        ],
+        "summary": "List the Mailboxes the caller may see",
+        "security": [
+          {
+            "accessToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "required": false,
+            "name": "cursor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^\\d{1,3}$"
+                }
+              ],
+              "default": 25
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "warming",
+                "healthy",
+                "limited",
+                "paused",
+                "disconnected"
+              ]
+            },
+            "required": false,
+            "name": "state",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "gmail",
+                "outlook"
+              ]
+            },
+            "required": false,
+            "name": "provider",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "personal",
+                "shared"
+              ]
+            },
+            "required": false,
+            "name": "kind",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^mem_[0-9a-f]{32}$"
+            },
+            "required": false,
+            "name": "ownerMembershipId",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of Mailboxes, oldest connection first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "pattern": "^mbx_[0-9a-f]{32}$"
+                          },
+                          "provider": {
+                            "type": "string",
+                            "enum": [
+                              "gmail",
+                              "outlook"
+                            ]
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "personal",
+                              "shared"
+                            ]
+                          },
+                          "address": {
+                            "type": "string",
+                            "maxLength": 320
+                          },
+                          "displayName": {
+                            "type": "string",
+                            "maxLength": 1000
+                          },
+                          "ownerMembershipId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "pattern": "^mem_[0-9a-f]{32}$"
+                          },
+                          "teamIds": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "pattern": "^team_[0-9a-f]{32}$"
+                            },
+                            "maxItems": 50
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "warming",
+                              "healthy",
+                              "limited",
+                              "paused",
+                              "disconnected"
+                            ]
+                          },
+                          "stateReason": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "enum": [
+                              "owner_paused",
+                              "admin_paused",
+                              "complaint_spike",
+                              "bounce_spike",
+                              "provider_suspended",
+                              "auth_revoked",
+                              "disconnected_by_owner",
+                              "health_warning",
+                              null
+                            ]
+                          },
+                          "limits": {
+                            "type": "object",
+                            "properties": {
+                              "perDay": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 500
+                              },
+                              "perHour": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 100
+                              },
+                              "minGapSeconds": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 3600
+                              },
+                              "window": {
+                                "type": "object",
+                                "properties": {
+                                  "timeZone": {
+                                    "type": "string",
+                                    "maxLength": 64,
+                                    "pattern": "^[A-Za-z][A-Za-z0-9_+-]*(\\/[A-Za-z0-9_+-]+){0,2}$"
+                                  },
+                                  "days": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "enum": [
+                                        "mon",
+                                        "tue",
+                                        "wed",
+                                        "thu",
+                                        "fri",
+                                        "sat",
+                                        "sun"
+                                      ]
+                                    },
+                                    "minItems": 1,
+                                    "maxItems": 7
+                                  },
+                                  "startMinute": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 1439
+                                  },
+                                  "endMinute": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 1440
+                                  }
+                                },
+                                "required": [
+                                  "timeZone",
+                                  "days",
+                                  "startMinute",
+                                  "endMinute"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": [
+                              "perDay",
+                              "perHour",
+                              "minGapSeconds",
+                              "window"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "effectiveLimits": {
+                            "type": "object",
+                            "properties": {
+                              "perDay": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 500
+                              },
+                              "perHour": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 100
+                              },
+                              "minGapSeconds": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 3600
+                              }
+                            },
+                            "required": [
+                              "perDay",
+                              "perHour",
+                              "minGapSeconds"
+                            ]
+                          },
+                          "ramp": {
+                            "type": "object",
+                            "properties": {
+                              "active": {
+                                "type": "boolean"
+                              },
+                              "dayIndex": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 36500
+                              },
+                              "perDayNow": {
+                                "type": [
+                                  "integer",
+                                  "null"
+                                ],
+                                "minimum": 0,
+                                "maximum": 500
+                              },
+                              "steps": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "fromDay": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 365
+                                    },
+                                    "perDay": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 500
+                                    }
+                                  },
+                                  "required": [
+                                    "fromDay",
+                                    "perDay"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                "maxItems": 20
+                              }
+                            },
+                            "required": [
+                              "active",
+                              "dayIndex",
+                              "perDayNow",
+                              "steps"
+                            ]
+                          },
+                          "health": {
+                            "type": "object",
+                            "properties": {
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "scored",
+                                  "not_enough_data"
+                                ]
+                              },
+                              "score": {
+                                "type": [
+                                  "integer",
+                                  "null"
+                                ],
+                                "minimum": 0,
+                                "maximum": 100
+                              },
+                              "effect": {
+                                "type": "string",
+                                "enum": [
+                                  "none",
+                                  "limit_halved",
+                                  "paused"
+                                ]
+                              },
+                              "scoredAt": {
+                                "type": "string",
+                                "maxLength": 64,
+                                "format": "date-time"
+                              }
+                            },
+                            "required": [
+                              "status",
+                              "score",
+                              "effect",
+                              "scoredAt"
+                            ]
+                          },
+                          "connectedAt": {
+                            "type": "string",
+                            "maxLength": 64,
+                            "format": "date-time"
+                          },
+                          "lastSyncedAt": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "maxLength": 64,
+                            "format": "date-time"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "provider",
+                          "kind",
+                          "address",
+                          "displayName",
+                          "ownerMembershipId",
+                          "teamIds",
+                          "state",
+                          "stateReason",
+                          "limits",
+                          "effectiveLimits",
+                          "ramp",
+                          "health",
+                          "connectedAt",
+                          "lastSyncedAt"
+                        ]
+                      },
+                      "maxItems": 100
+                    },
+                    "nextCursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "minLength": 1,
+                      "maxLength": 512
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "nextCursor"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "request.invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "auth.unauthenticated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "auth.forbidden.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "server.internal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/mailboxes/{mailboxId}": {
+      "get": {
+        "description": "Reads one Mailbox with its owner, state, limits, ramp and health summary. No response, event, log line or error report carries a token, refresh token, authorization code, client secret or key of a Mailbox, and no message body or subject. An Owner or Admin sees every Mailbox; a Manager sees those of the Reps on their Team and the shared ones opened to it; a Rep sees only their own and the shared ones opened to their Team. A Mailbox or send record outside the caller's view is mailbox.not_found or send.not_found (404), never 403, and one of another Organization the same.",
+        "tags": [
+          "mailboxes"
+        ],
+        "summary": "Read one Mailbox",
+        "security": [
+          {
+            "accessToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^mbx_[0-9a-f]{32}$"
+            },
+            "required": true,
+            "name": "mailboxId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The Mailbox.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^mbx_[0-9a-f]{32}$"
+                    },
+                    "provider": {
+                      "type": "string",
+                      "enum": [
+                        "gmail",
+                        "outlook"
+                      ]
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "personal",
+                        "shared"
+                      ]
+                    },
+                    "address": {
+                      "type": "string",
+                      "maxLength": 320
+                    },
+                    "displayName": {
+                      "type": "string",
+                      "maxLength": 1000
+                    },
+                    "ownerMembershipId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^mem_[0-9a-f]{32}$"
+                    },
+                    "teamIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^team_[0-9a-f]{32}$"
+                      },
+                      "maxItems": 50
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "warming",
+                        "healthy",
+                        "limited",
+                        "paused",
+                        "disconnected"
+                      ]
+                    },
+                    "stateReason": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "enum": [
+                        "owner_paused",
+                        "admin_paused",
+                        "complaint_spike",
+                        "bounce_spike",
+                        "provider_suspended",
+                        "auth_revoked",
+                        "disconnected_by_owner",
+                        "health_warning",
+                        null
+                      ]
+                    },
+                    "limits": {
+                      "type": "object",
+                      "properties": {
+                        "perDay": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 500
+                        },
+                        "perHour": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 100
+                        },
+                        "minGapSeconds": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 3600
+                        },
+                        "window": {
+                          "type": "object",
+                          "properties": {
+                            "timeZone": {
+                              "type": "string",
+                              "maxLength": 64,
+                              "pattern": "^[A-Za-z][A-Za-z0-9_+-]*(\\/[A-Za-z0-9_+-]+){0,2}$"
+                            },
+                            "days": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "enum": [
+                                  "mon",
+                                  "tue",
+                                  "wed",
+                                  "thu",
+                                  "fri",
+                                  "sat",
+                                  "sun"
+                                ]
+                              },
+                              "minItems": 1,
+                              "maxItems": 7
+                            },
+                            "startMinute": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 1439
+                            },
+                            "endMinute": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 1440
+                            }
+                          },
+                          "required": [
+                            "timeZone",
+                            "days",
+                            "startMinute",
+                            "endMinute"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "perDay",
+                        "perHour",
+                        "minGapSeconds",
+                        "window"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "effectiveLimits": {
+                      "type": "object",
+                      "properties": {
+                        "perDay": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 500
+                        },
+                        "perHour": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 100
+                        },
+                        "minGapSeconds": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 3600
+                        }
+                      },
+                      "required": [
+                        "perDay",
+                        "perHour",
+                        "minGapSeconds"
+                      ]
+                    },
+                    "ramp": {
+                      "type": "object",
+                      "properties": {
+                        "active": {
+                          "type": "boolean"
+                        },
+                        "dayIndex": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 36500
+                        },
+                        "perDayNow": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "minimum": 0,
+                          "maximum": 500
+                        },
+                        "steps": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "fromDay": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 365
+                              },
+                              "perDay": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 500
+                              }
+                            },
+                            "required": [
+                              "fromDay",
+                              "perDay"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "maxItems": 20
+                        }
+                      },
+                      "required": [
+                        "active",
+                        "dayIndex",
+                        "perDayNow",
+                        "steps"
+                      ]
+                    },
+                    "health": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "scored",
+                            "not_enough_data"
+                          ]
+                        },
+                        "score": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "minimum": 0,
+                          "maximum": 100
+                        },
+                        "effect": {
+                          "type": "string",
+                          "enum": [
+                            "none",
+                            "limit_halved",
+                            "paused"
+                          ]
+                        },
+                        "scoredAt": {
+                          "type": "string",
+                          "maxLength": 64,
+                          "format": "date-time"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "score",
+                        "effect",
+                        "scoredAt"
+                      ]
+                    },
+                    "connectedAt": {
+                      "type": "string",
+                      "maxLength": 64,
+                      "format": "date-time"
+                    },
+                    "lastSyncedAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "maxLength": 64,
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "provider",
+                    "kind",
+                    "address",
+                    "displayName",
+                    "ownerMembershipId",
+                    "teamIds",
+                    "state",
+                    "stateReason",
+                    "limits",
+                    "effectiveLimits",
+                    "ramp",
+                    "health",
+                    "connectedAt",
+                    "lastSyncedAt"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "auth.unauthenticated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "auth.forbidden.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "mailbox.not_found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "server.internal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "description": "Disconnects a Mailbox: its tokens are deleted at once, the grant is revoked where the provider allows, the state becomes disconnected and mailbox.state_changed is published. History (sends, events, health) stays. Requires an Idempotency-Key header; disconnecting one already disconnected answers 200 and publishes nothing again. The owner may disconnect their own; an Admin or Owner any. A Manager or another Rep who can see it but does not own it is auth.forbidden. No response, event, log line or error report carries a token, refresh token, authorization code, client secret or key of a Mailbox, and no message body or subject. An Owner or Admin sees every Mailbox; a Manager sees those of the Reps on their Team and the shared ones opened to it; a Rep sees only their own and the shared ones opened to their Team. A Mailbox or send record outside the caller's view is mailbox.not_found or send.not_found (404), never 403, and one of another Organization the same.",
+        "tags": [
+          "mailboxes"
+        ],
+        "summary": "Disconnect a Mailbox",
+        "security": [
+          {
+            "accessToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^mbx_[0-9a-f]{32}$"
+            },
+            "required": true,
+            "name": "mailboxId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_.:-]+$",
+              "description": "Makes a repeat of the same request change nothing more."
+            },
+            "required": true,
+            "description": "Makes a repeat of the same request change nothing more.",
+            "name": "idempotency-key",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The Mailbox after it was disconnected.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^mbx_[0-9a-f]{32}$"
+                    },
+                    "provider": {
+                      "type": "string",
+                      "enum": [
+                        "gmail",
+                        "outlook"
+                      ]
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "personal",
+                        "shared"
+                      ]
+                    },
+                    "address": {
+                      "type": "string",
+                      "maxLength": 320
+                    },
+                    "displayName": {
+                      "type": "string",
+                      "maxLength": 1000
+                    },
+                    "ownerMembershipId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^mem_[0-9a-f]{32}$"
+                    },
+                    "teamIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^team_[0-9a-f]{32}$"
+                      },
+                      "maxItems": 50
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "warming",
+                        "healthy",
+                        "limited",
+                        "paused",
+                        "disconnected"
+                      ]
+                    },
+                    "stateReason": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "enum": [
+                        "owner_paused",
+                        "admin_paused",
+                        "complaint_spike",
+                        "bounce_spike",
+                        "provider_suspended",
+                        "auth_revoked",
+                        "disconnected_by_owner",
+                        "health_warning",
+                        null
+                      ]
+                    },
+                    "limits": {
+                      "type": "object",
+                      "properties": {
+                        "perDay": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 500
+                        },
+                        "perHour": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 100
+                        },
+                        "minGapSeconds": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 3600
+                        },
+                        "window": {
+                          "type": "object",
+                          "properties": {
+                            "timeZone": {
+                              "type": "string",
+                              "maxLength": 64,
+                              "pattern": "^[A-Za-z][A-Za-z0-9_+-]*(\\/[A-Za-z0-9_+-]+){0,2}$"
+                            },
+                            "days": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "enum": [
+                                  "mon",
+                                  "tue",
+                                  "wed",
+                                  "thu",
+                                  "fri",
+                                  "sat",
+                                  "sun"
+                                ]
+                              },
+                              "minItems": 1,
+                              "maxItems": 7
+                            },
+                            "startMinute": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 1439
+                            },
+                            "endMinute": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 1440
+                            }
+                          },
+                          "required": [
+                            "timeZone",
+                            "days",
+                            "startMinute",
+                            "endMinute"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "perDay",
+                        "perHour",
+                        "minGapSeconds",
+                        "window"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "effectiveLimits": {
+                      "type": "object",
+                      "properties": {
+                        "perDay": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 500
+                        },
+                        "perHour": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 100
+                        },
+                        "minGapSeconds": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 3600
+                        }
+                      },
+                      "required": [
+                        "perDay",
+                        "perHour",
+                        "minGapSeconds"
+                      ]
+                    },
+                    "ramp": {
+                      "type": "object",
+                      "properties": {
+                        "active": {
+                          "type": "boolean"
+                        },
+                        "dayIndex": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 36500
+                        },
+                        "perDayNow": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "minimum": 0,
+                          "maximum": 500
+                        },
+                        "steps": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "fromDay": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 365
+                              },
+                              "perDay": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 500
+                              }
+                            },
+                            "required": [
+                              "fromDay",
+                              "perDay"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "maxItems": 20
+                        }
+                      },
+                      "required": [
+                        "active",
+                        "dayIndex",
+                        "perDayNow",
+                        "steps"
+                      ]
+                    },
+                    "health": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "scored",
+                            "not_enough_data"
+                          ]
+                        },
+                        "score": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "minimum": 0,
+                          "maximum": 100
+                        },
+                        "effect": {
+                          "type": "string",
+                          "enum": [
+                            "none",
+                            "limit_halved",
+                            "paused"
+                          ]
+                        },
+                        "scoredAt": {
+                          "type": "string",
+                          "maxLength": 64,
+                          "format": "date-time"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "score",
+                        "effect",
+                        "scoredAt"
+                      ]
+                    },
+                    "connectedAt": {
+                      "type": "string",
+                      "maxLength": 64,
+                      "format": "date-time"
+                    },
+                    "lastSyncedAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "maxLength": 64,
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "provider",
+                    "kind",
+                    "address",
+                    "displayName",
+                    "ownerMembershipId",
+                    "teamIds",
+                    "state",
+                    "stateReason",
+                    "limits",
+                    "effectiveLimits",
+                    "ramp",
+                    "health",
+                    "connectedAt",
+                    "lastSyncedAt"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "request.invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "auth.unauthenticated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "auth.forbidden.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "mailbox.not_found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "request.idempotency_in_progress.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^[1-9][0-9]*$",
+                  "description": "Whole seconds to wait before trying again."
+                },
+                "required": true,
+                "description": "Whole seconds to wait before trying again."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "request.idempotency_key_reused.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "server.internal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/mailboxes/connect": {
+      "post": {
+        "description": "Starts connecting a Mailbox through Gmail or Outlook: answers the provider's consent URL and when the attempt expires. Requires an Idempotency-Key header: a replay answers the same URL. Any role may connect a personal Mailbox; a shared one (with the Teams that may use it) is Owner and Admin only, and any other role is auth.forbidden. Scopes are the least needed to send and read replies. No response, event, log line or error report carries a token, refresh token, authorization code, client secret or key of a Mailbox, and no message body or subject.",
+        "tags": [
+          "mailboxes"
+        ],
+        "summary": "Start connecting a Mailbox",
+        "security": [
+          {
+            "accessToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_.:-]+$",
+              "description": "Makes a repeat of the same request change nothing more."
+            },
+            "required": true,
+            "description": "Makes a repeat of the same request change nothing more.",
+            "name": "idempotency-key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "provider": {
+                    "type": "string",
+                    "enum": [
+                      "gmail",
+                      "outlook"
+                    ]
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "personal",
+                      "shared"
+                    ],
+                    "default": "personal"
+                  },
+                  "teamIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^team_[0-9a-f]{32}$"
+                    },
+                    "maxItems": 50,
+                    "default": []
+                  }
+                },
+                "required": [
+                  "provider"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The provider's consent URL and when this attempt expires.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "authorizationUrl": {
+                      "type": "string",
+                      "maxLength": 2048,
+                      "format": "uri"
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "maxLength": 64,
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "authorizationUrl",
+                    "expiresAt"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "request.invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "auth.unauthenticated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "auth.forbidden.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "request.idempotency_in_progress.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^[1-9][0-9]*$",
+                  "description": "Whole seconds to wait before trying again."
+                },
+                "required": true,
+                "description": "Whole seconds to wait before trying again."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "request.idempotency_key_reused.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "server.internal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "server.unavailable.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^[1-9][0-9]*$",
+                  "description": "Whole seconds to wait before trying again."
+                },
+                "required": true,
+                "description": "Whole seconds to wait before trying again."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/mailboxes/connect/complete": {
+      "post": {
+        "description": "Completes a connection after the provider sent the person back, with the state of the attempt and the authorization code. The code is exchanged for tokens, which are encrypted at rest and never returned; the Mailbox starts in the warming state on the published ramp with default limits at or below the Organization's ceiling. Requires an Idempotency-Key header: a replay answers the same Mailbox with 200. An unknown, expired, used or foreign attempt is mailbox.oauth_state_invalid (400); an address already connected is mailbox.already_connected (409). A provider that does not answer in time is server.unavailable or server.timeout and nothing is stored. No response, event, log line or error report carries a token, refresh token, authorization code, client secret or key of a Mailbox, and no message body or subject.",
+        "tags": [
+          "mailboxes"
+        ],
+        "summary": "Complete connecting a Mailbox",
+        "security": [
+          {
+            "accessToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_.:-]+$",
+              "description": "Makes a repeat of the same request change nothing more."
+            },
+            "required": true,
+            "description": "Makes a repeat of the same request change nothing more.",
+            "name": "idempotency-key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "state": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{16,256}$"
+                  },
+                  "code": {
+                    "type": "string",
+                    "pattern": "^[\\x21-\\x7e]{1,2048}$"
+                  }
+                },
+                "required": [
+                  "state",
+                  "code"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The same attempt was already completed; this is its Mailbox.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^mbx_[0-9a-f]{32}$"
+                    },
+                    "provider": {
+                      "type": "string",
+                      "enum": [
+                        "gmail",
+                        "outlook"
+                      ]
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "personal",
+                        "shared"
+                      ]
+                    },
+                    "address": {
+                      "type": "string",
+                      "maxLength": 320
+                    },
+                    "displayName": {
+                      "type": "string",
+                      "maxLength": 1000
+                    },
+                    "ownerMembershipId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^mem_[0-9a-f]{32}$"
+                    },
+                    "teamIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^team_[0-9a-f]{32}$"
+                      },
+                      "maxItems": 50
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "warming",
+                        "healthy",
+                        "limited",
+                        "paused",
+                        "disconnected"
+                      ]
+                    },
+                    "stateReason": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "enum": [
+                        "owner_paused",
+                        "admin_paused",
+                        "complaint_spike",
+                        "bounce_spike",
+                        "provider_suspended",
+                        "auth_revoked",
+                        "disconnected_by_owner",
+                        "health_warning",
+                        null
+                      ]
+                    },
+                    "limits": {
+                      "type": "object",
+                      "properties": {
+                        "perDay": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 500
+                        },
+                        "perHour": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 100
+                        },
+                        "minGapSeconds": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 3600
+                        },
+                        "window": {
+                          "type": "object",
+                          "properties": {
+                            "timeZone": {
+                              "type": "string",
+                              "maxLength": 64,
+                              "pattern": "^[A-Za-z][A-Za-z0-9_+-]*(\\/[A-Za-z0-9_+-]+){0,2}$"
+                            },
+                            "days": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "enum": [
+                                  "mon",
+                                  "tue",
+                                  "wed",
+                                  "thu",
+                                  "fri",
+                                  "sat",
+                                  "sun"
+                                ]
+                              },
+                              "minItems": 1,
+                              "maxItems": 7
+                            },
+                            "startMinute": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 1439
+                            },
+                            "endMinute": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 1440
+                            }
+                          },
+                          "required": [
+                            "timeZone",
+                            "days",
+                            "startMinute",
+                            "endMinute"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "perDay",
+                        "perHour",
+                        "minGapSeconds",
+                        "window"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "effectiveLimits": {
+                      "type": "object",
+                      "properties": {
+                        "perDay": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 500
+                        },
+                        "perHour": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 100
+                        },
+                        "minGapSeconds": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 3600
+                        }
+                      },
+                      "required": [
+                        "perDay",
+                        "perHour",
+                        "minGapSeconds"
+                      ]
+                    },
+                    "ramp": {
+                      "type": "object",
+                      "properties": {
+                        "active": {
+                          "type": "boolean"
+                        },
+                        "dayIndex": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 36500
+                        },
+                        "perDayNow": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "minimum": 0,
+                          "maximum": 500
+                        },
+                        "steps": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "fromDay": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 365
+                              },
+                              "perDay": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 500
+                              }
+                            },
+                            "required": [
+                              "fromDay",
+                              "perDay"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "maxItems": 20
+                        }
+                      },
+                      "required": [
+                        "active",
+                        "dayIndex",
+                        "perDayNow",
+                        "steps"
+                      ]
+                    },
+                    "health": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "scored",
+                            "not_enough_data"
+                          ]
+                        },
+                        "score": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "minimum": 0,
+                          "maximum": 100
+                        },
+                        "effect": {
+                          "type": "string",
+                          "enum": [
+                            "none",
+                            "limit_halved",
+                            "paused"
+                          ]
+                        },
+                        "scoredAt": {
+                          "type": "string",
+                          "maxLength": 64,
+                          "format": "date-time"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "score",
+                        "effect",
+                        "scoredAt"
+                      ]
+                    },
+                    "connectedAt": {
+                      "type": "string",
+                      "maxLength": 64,
+                      "format": "date-time"
+                    },
+                    "lastSyncedAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "maxLength": 64,
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "provider",
+                    "kind",
+                    "address",
+                    "displayName",
+                    "ownerMembershipId",
+                    "teamIds",
+                    "state",
+                    "stateReason",
+                    "limits",
+                    "effectiveLimits",
+                    "ramp",
+                    "health",
+                    "connectedAt",
+                    "lastSyncedAt"
+                  ]
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "The Mailbox was connected.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^mbx_[0-9a-f]{32}$"
+                    },
+                    "provider": {
+                      "type": "string",
+                      "enum": [
+                        "gmail",
+                        "outlook"
+                      ]
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "personal",
+                        "shared"
+                      ]
+                    },
+                    "address": {
+                      "type": "string",
+                      "maxLength": 320
+                    },
+                    "displayName": {
+                      "type": "string",
+                      "maxLength": 1000
+                    },
+                    "ownerMembershipId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^mem_[0-9a-f]{32}$"
+                    },
+                    "teamIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^team_[0-9a-f]{32}$"
+                      },
+                      "maxItems": 50
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "warming",
+                        "healthy",
+                        "limited",
+                        "paused",
+                        "disconnected"
+                      ]
+                    },
+                    "stateReason": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "enum": [
+                        "owner_paused",
+                        "admin_paused",
+                        "complaint_spike",
+                        "bounce_spike",
+                        "provider_suspended",
+                        "auth_revoked",
+                        "disconnected_by_owner",
+                        "health_warning",
+                        null
+                      ]
+                    },
+                    "limits": {
+                      "type": "object",
+                      "properties": {
+                        "perDay": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 500
+                        },
+                        "perHour": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 100
+                        },
+                        "minGapSeconds": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 3600
+                        },
+                        "window": {
+                          "type": "object",
+                          "properties": {
+                            "timeZone": {
+                              "type": "string",
+                              "maxLength": 64,
+                              "pattern": "^[A-Za-z][A-Za-z0-9_+-]*(\\/[A-Za-z0-9_+-]+){0,2}$"
+                            },
+                            "days": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "enum": [
+                                  "mon",
+                                  "tue",
+                                  "wed",
+                                  "thu",
+                                  "fri",
+                                  "sat",
+                                  "sun"
+                                ]
+                              },
+                              "minItems": 1,
+                              "maxItems": 7
+                            },
+                            "startMinute": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 1439
+                            },
+                            "endMinute": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 1440
+                            }
+                          },
+                          "required": [
+                            "timeZone",
+                            "days",
+                            "startMinute",
+                            "endMinute"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "perDay",
+                        "perHour",
+                        "minGapSeconds",
+                        "window"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "effectiveLimits": {
+                      "type": "object",
+                      "properties": {
+                        "perDay": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 500
+                        },
+                        "perHour": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 100
+                        },
+                        "minGapSeconds": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 3600
+                        }
+                      },
+                      "required": [
+                        "perDay",
+                        "perHour",
+                        "minGapSeconds"
+                      ]
+                    },
+                    "ramp": {
+                      "type": "object",
+                      "properties": {
+                        "active": {
+                          "type": "boolean"
+                        },
+                        "dayIndex": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 36500
+                        },
+                        "perDayNow": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "minimum": 0,
+                          "maximum": 500
+                        },
+                        "steps": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "fromDay": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 365
+                              },
+                              "perDay": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 500
+                              }
+                            },
+                            "required": [
+                              "fromDay",
+                              "perDay"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "maxItems": 20
+                        }
+                      },
+                      "required": [
+                        "active",
+                        "dayIndex",
+                        "perDayNow",
+                        "steps"
+                      ]
+                    },
+                    "health": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "scored",
+                            "not_enough_data"
+                          ]
+                        },
+                        "score": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "minimum": 0,
+                          "maximum": 100
+                        },
+                        "effect": {
+                          "type": "string",
+                          "enum": [
+                            "none",
+                            "limit_halved",
+                            "paused"
+                          ]
+                        },
+                        "scoredAt": {
+                          "type": "string",
+                          "maxLength": 64,
+                          "format": "date-time"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "score",
+                        "effect",
+                        "scoredAt"
+                      ]
+                    },
+                    "connectedAt": {
+                      "type": "string",
+                      "maxLength": 64,
+                      "format": "date-time"
+                    },
+                    "lastSyncedAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "maxLength": 64,
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "provider",
+                    "kind",
+                    "address",
+                    "displayName",
+                    "ownerMembershipId",
+                    "teamIds",
+                    "state",
+                    "stateReason",
+                    "limits",
+                    "effectiveLimits",
+                    "ramp",
+                    "health",
+                    "connectedAt",
+                    "lastSyncedAt"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "mailbox.oauth_state_invalid, request.invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "auth.unauthenticated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "auth.forbidden.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "mailbox.already_connected, request.idempotency_in_progress.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^[1-9][0-9]*$",
+                  "description": "Whole seconds to wait before trying again."
+                },
+                "required": true,
+                "description": "Whole seconds to wait before trying again."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "request.idempotency_key_reused.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "server.internal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "server.unavailable.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^[1-9][0-9]*$",
+                  "description": "Whole seconds to wait before trying again."
+                },
+                "required": true,
+                "description": "Whole seconds to wait before trying again."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "server.timeout.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "webhooks": {}

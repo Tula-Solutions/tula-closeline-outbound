@@ -26,7 +26,46 @@ test('configuration falls back to defaults for everything but the environment', 
     ENRICHMENT_RUN_LEASE_SECONDS: 120,
     CORE_CALL_TIMEOUT_MS: 5_000,
     CORE_CALL_MAX_TRIES: 3,
+    GOOGLE_AUTH_URL: 'https://accounts.google.com/o/oauth2/v2/auth',
+    GOOGLE_TOKEN_URL: 'https://oauth2.googleapis.com/token',
+    GOOGLE_REVOKE_URL: 'https://oauth2.googleapis.com/revoke',
+    GMAIL_API_BASE_URL: 'https://gmail.googleapis.com',
+    MAIL_OAUTH_REDIRECT_URI: 'http://127.0.0.1:3000/mailboxes/connect/callback',
+    MAIL_STATE_SECRET: 'local-only-mail-state-secret-do-not-use',
+    MAIL_CALL_TIMEOUT_MS: 10_000,
+    MAIL_CALL_MAX_TRIES: 3,
+    MAIL_RETRY_BASE_MS: 200,
   })
+})
+
+test('a Google client id needs its secret', () => {
+  expect(() => loadEnv({ ENVIRONMENT: 'local', GOOGLE_CLIENT_ID: 'id' })).toThrow(
+    /GOOGLE_CLIENT_SECRET.*is required/s
+  )
+})
+
+test('the local AES key is refused in staging and prod', () => {
+  const key = Buffer.alloc(32, 7).toString('base64')
+  expect(loadEnv({ ENVIRONMENT: 'local', MAIL_SECRET_BOX_KEY: key }).MAIL_SECRET_BOX_KEY).toBe(key)
+  expect(() => loadEnv({ ENVIRONMENT: 'staging', MAIL_SECRET_BOX_KEY: key })).toThrow(
+    /MAIL_SECRET_BOX_KEY/
+  )
+})
+
+test('a short state secret is refused', () => {
+  expect(() => loadEnv({ ENVIRONMENT: 'local', MAIL_STATE_SECRET: 'short' })).toThrow(
+    /MAIL_STATE_SECRET/
+  )
+})
+
+test('a provider endpoint must be https outside local', () => {
+  expect(
+    loadEnv({ ENVIRONMENT: 'local', GOOGLE_TOKEN_URL: 'http://127.0.0.1:3010/token' })
+      .GOOGLE_TOKEN_URL
+  ).toBe('http://127.0.0.1:3010/token')
+  expect(() =>
+    loadEnv({ ENVIRONMENT: 'dev', GOOGLE_TOKEN_URL: 'http://127.0.0.1:3010/token' })
+  ).toThrow(/GOOGLE_TOKEN_URL must be https/)
 })
 
 test('a deploy without ENVIRONMENT fails at boot instead of running as local', () => {

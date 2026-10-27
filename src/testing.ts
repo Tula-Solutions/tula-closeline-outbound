@@ -23,8 +23,14 @@ import {
 } from 'tula-closeline-kit/testing'
 import { createMemoryCampaignStore } from '~/adapters/memory/campaign-store'
 import { createMemoryCore, type MemoryCore } from '~/adapters/memory/core'
+import {
+  createMemoryMailTransport,
+  type MemoryMailTransport,
+} from '~/adapters/memory/mail-transport'
+import { createMemoryMailboxStore } from '~/adapters/memory/mailbox-store'
 import { createMemoryProviderConfig } from '~/adapters/memory/provider-config'
 import type { MemoryProvider, MemoryVerifier } from '~/adapters/memory/providers'
+import { createMemorySecretBox } from '~/adapters/memory/secret-box'
 import { createMemoryEnrichmentStore } from '~/adapters/memory/store'
 import { createApp } from '~/app'
 import { createOutboundConsumer } from '~/consumer'
@@ -34,6 +40,7 @@ import type { AppEnv } from '~/http/types'
 import { SERVICE } from '~/info'
 import { type OutboundDefinition, registry } from '~/messages'
 import { enrichmentHandlers } from '~/modules/enrichment/handlers'
+import type { MailboxStateChanged } from '~/modules/mailbox/deps'
 
 /** The issuer and audience the test environment's tokens carry. */
 const TEST_ISSUER = 'https://auth.test'
@@ -53,6 +60,10 @@ export type TestDeps = Container & {
   store: ReturnType<typeof createMemoryEnrichmentStore>
   /** The kit's memory error reporter: what the consumer and the error handler would send to Sentry. */
   errors: MemoryErrorReporter
+  /** The Gmail stand-in: consent as a person, revoke a grant, fail the provider, read what was sent. */
+  mail: MemoryMailTransport
+  /** Every `mailbox.state_changed` published, in order. */
+  mailEvents: { organizationId: string; event: MailboxStateChanged }[]
   /** Every JSON log line written, in order. */
   logLines: string[]
   /** Every call to `reportError`, in order. */
@@ -104,6 +115,7 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     QUEUE_URL: 'https://sqs.test/000000000000/outbound',
     CORE_URL: 'https://core.test',
     CORE_INTERNAL_SECRET: 'testing-shared-secret-0123456789-abcdefg',
+    MAIL_STATE_SECRET: 'testing-mail-state-secret-0123456789-abcdef',
     ...overrides.env,
   })
   const queue = createMemoryQueue({ registry, clock: time.clock, sleep: time.sleep })
@@ -139,6 +151,24 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     clock: time.clock,
   }
 
+  const mail = createMemoryMailTransport({
+    clock: time.clock,
+    redirectUri: env.MAIL_OAUTH_REDIRECT_URI,
+  })
+  const mailEvents: TestDeps['mailEvents'] = []
+  const mailboxes: Container['mailboxes'] = {
+    store: createMemoryMailboxStore(),
+    access: core.access,
+    clock: time.clock,
+    secretBox: createMemorySecretBox(),
+    transports: { gmail: mail },
+    stateSecret: env.MAIL_STATE_SECRET,
+    events: async (organizationId, event) => {
+      mailEvents.push({ organizationId, event })
+    },
+    logger,
+  }
+
   return {
     env,
     logger,
@@ -152,6 +182,9 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     processed,
     enrichment,
     campaigns,
+    mailboxes,
+    mail,
+    mailEvents,
     core,
     config,
     store,

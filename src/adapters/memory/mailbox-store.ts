@@ -54,6 +54,14 @@ export function createMemoryMailboxStore(): MailboxStore {
       return entries.get(key(organizationId, id))?.record ?? null
     },
 
+    async findByAddress(organizationId, provider, address) {
+      return (
+        inOrg(organizationId).find(
+          (e) => e.record.provider === provider && e.record.address === address
+        )?.record ?? null
+      )
+    },
+
     async list(organizationId, filter, after, limit) {
       const sorted = inOrg(organizationId)
         .map((e) => e.record)

@@ -167,6 +167,21 @@ export function createPostgresMailboxStore(inOrganization: InOrganization): Mail
     find: (organizationId, id) =>
       inOrganization(organizationId, (tx) => loadRecord(tx, organizationId, id)),
 
+    findByAddress: (organizationId, provider, address) =>
+      inOrganization(organizationId, async (tx) => {
+        const [row] = await tx
+          .select({ id: mailboxes.id })
+          .from(mailboxes)
+          .where(
+            and(
+              eq(mailboxes.organizationId, organizationId),
+              eq(mailboxes.provider, provider),
+              eq(mailboxes.address, address)
+            )
+          )
+        return row === undefined ? null : loadRecord(tx, organizationId, row.id)
+      }),
+
     list: (organizationId, filter, after, limit) =>
       inOrganization(organizationId, async (tx) => {
         const rows = await tx

@@ -18,9 +18,14 @@ import {
 } from 'tula-closeline-kit'
 import { type Consumer, createSqsQueue } from 'tula-closeline-kit/queue'
 import { createMemoryQueue } from 'tula-closeline-kit/testing'
+import { createLocalKeySecretBox, createUnconfiguredSecretBox } from '~/adapters/crypto/secret-box'
+import { createGmailMailTransport } from '~/adapters/gmail/mail-transport'
 import { createHttpCoreProspects } from '~/adapters/http/core'
 import { createMemoryCore } from '~/adapters/memory/core'
+import { createMemoryMailTransport } from '~/adapters/memory/mail-transport'
+import { createMemorySecretBox } from '~/adapters/memory/secret-box'
 import { createPostgresCampaignStore } from '~/adapters/postgres/campaign-store'
+import { createPostgresMailboxStore } from '~/adapters/postgres/mailbox-store'
 import { createPostgresProviderConfig } from '~/adapters/postgres/provider-config'
 import { createPostgresEnrichmentStore } from '~/adapters/postgres/store'
 import { createOutboundConsumer } from '~/consumer'
@@ -31,6 +36,7 @@ import { type OutboundEnvelope, registry } from '~/messages'
 import type { CampaignDeps } from '~/modules/campaign/deps'
 import type { EnrichmentDeps } from '~/modules/enrichment/deps'
 import { enrichmentHandlers } from '~/modules/enrichment/handlers'
+import type { MailboxDeps } from '~/modules/mailbox/deps'
 import type { CredentialVault } from '~/ports/provider-config'
 import { trackerSafe } from '~/tracker-safe'
 
@@ -71,6 +77,8 @@ export type Container = {
   enrichment: EnrichmentDeps
   /** Everything the campaign module needs; its service functions take this first. */
   campaigns: CampaignDeps
+  /** Everything the mailbox module needs; its service functions take this first. */
+  mailboxes: MailboxDeps
   /** The queue consumer; built here, started by `server.ts` and stopped on shutdown. */
   consumer: Consumer
   /** Probes run by `/readyz`: the database. */
@@ -213,6 +221,45 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     access: core.access,
     clock: systemClock,
   }
+  const mailboxes: MailboxDeps = {
+    store: createPostgresMailboxStore(inOrganization),
+    access: core.access,
+    clock: systemClock,
+    secretBox:
+      env.MAIL_SECRET_BOX_KEY !== undefined
+        ? createLocalKeySecretBox(env.MAIL_SECRET_BOX_KEY)
+        : env.ENVIRONMENT === 'local'
+          ? createMemorySecretBox()
+          : createUnconfiguredSecretBox(),
+    transports: {
+      gmail:
+        env.GOOGLE_CLIENT_ID !== undefined && env.GOOGLE_CLIENT_SECRET !== undefined
+          ? createGmailMailTransport({
+              clientId: env.GOOGLE_CLIENT_ID,
+              clientSecret: env.GOOGLE_CLIENT_SECRET,
+              redirectUri: env.MAIL_OAUTH_REDIRECT_URI,
+              authUrl: env.GOOGLE_AUTH_URL,
+              tokenUrl: env.GOOGLE_TOKEN_URL,
+              revokeUrl: env.GOOGLE_REVOKE_URL,
+              apiBaseUrl: env.GMAIL_API_BASE_URL,
+              timeoutMs: env.MAIL_CALL_TIMEOUT_MS,
+              maxTries: env.MAIL_CALL_MAX_TRIES,
+              retryBaseMs: env.MAIL_RETRY_BASE_MS,
+            })
+          : env.ENVIRONMENT === 'local'
+            ? createMemoryMailTransport({
+                clock: systemClock,
+                redirectUri: env.MAIL_OAUTH_REDIRECT_URI,
+              })
+            : undefined,
+    },
+    stateSecret: env.MAIL_STATE_SECRET,
+    // There is no event bus in this service yet; the change is logged until one exists.
+    events: async (organizationId, event) => {
+      logger.info('mailbox.state_changed', { organizationId, ...event })
+    },
+    logger,
+  }
   const consumer = createOutboundConsumer({
     queue,
     store: processed,
@@ -237,6 +284,7 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     processed,
     enrichment,
     campaigns,
+    mailboxes,
     consumer,
     readinessChecks: [
       {

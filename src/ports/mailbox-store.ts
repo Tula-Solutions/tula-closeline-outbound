@@ -83,6 +83,12 @@ export type MailboxStore = {
   ) => Promise<ConnectResult>
   /** One Mailbox, or null. */
   find: (organizationId: OrganizationId, id: MailboxId) => Promise<MailboxRecord | null>
+  /** The Mailbox at this address, connected or not, or null. */
+  findByAddress: (
+    organizationId: OrganizationId,
+    provider: MailboxProvider,
+    address: string
+  ) => Promise<MailboxRecord | null>
   /** One page, oldest connection first, at most `limit`. */
   list: (
     organizationId: OrganizationId,

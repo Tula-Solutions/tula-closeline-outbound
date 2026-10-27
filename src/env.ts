@@ -26,6 +26,7 @@ const REQUIRED_OUTSIDE_LOCAL = [
   'QUEUE_URL',
   'CORE_URL',
   'CORE_INTERNAL_SECRET',
+  'MAIL_STATE_SECRET',
 ] as const
 
 /**
@@ -59,6 +60,30 @@ function worstProviderAttemptMs(env: {
   const backoff = 1.5 * env.ENRICHMENT_RETRY_BASE_MS * (2 ** (tries - 1) - 1)
   return env.ENRICHMENT_PROVIDER_TIMEOUT_MS * tries + backoff
 }
+
+/** Google's own endpoints, used unless a local run points them at the fake provider. */
+const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
+const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
+const GOOGLE_REVOKE_URL = 'https://oauth2.googleapis.com/revoke'
+const GMAIL_API_BASE_URL = 'https://gmail.googleapis.com'
+
+/** Where the portal receives the provider's redirect in a local run. */
+const LOCAL_MAIL_REDIRECT_URI = 'http://127.0.0.1:3000/mailboxes/connect/callback'
+
+/** The signing secret of connect attempts in a local run; any other environment must set its own. */
+const LOCAL_MAIL_STATE_SECRET = 'local-only-mail-state-secret-do-not-use'
+
+/** The shortest connect-attempt signing secret, in characters. */
+const MIN_MAIL_STATE_SECRET_LENGTH = 32
+
+/** The keys of a Mailbox provider's endpoints, which must be https outside `local`. */
+const MAIL_ENDPOINT_KEYS = [
+  'GOOGLE_AUTH_URL',
+  'GOOGLE_TOKEN_URL',
+  'GOOGLE_REVOKE_URL',
+  'GMAIL_API_BASE_URL',
+  'MAIL_OAUTH_REDIRECT_URI',
+] as const
 
 const schema = z
   .object({
@@ -134,6 +159,41 @@ const schema = z
     CORE_CALL_TIMEOUT_MS: integer(100, 60_000).default(5_000),
     /** The most times one call to core is tried (the first included) on a network error or 503. */
     CORE_CALL_MAX_TRIES: integer(1, 5).default(3),
+
+    /** The Google OAuth client for Gmail Mailboxes. Unset in `local` means the in-memory provider. */
+    GOOGLE_CLIENT_ID: z.string().min(1).max(512).optional(),
+    /** The Google OAuth client secret; required with `GOOGLE_CLIENT_ID`. Never log it. */
+    GOOGLE_CLIENT_SECRET: z.string().min(1).max(512).optional(),
+    /** Google's consent page; a local run may point it at the fake provider. */
+    GOOGLE_AUTH_URL: z.url().max(2_048).default(GOOGLE_AUTH_URL),
+    /** Google's token endpoint. */
+    GOOGLE_TOKEN_URL: z.url().max(2_048).default(GOOGLE_TOKEN_URL),
+    /** Google's revoke endpoint. */
+    GOOGLE_REVOKE_URL: z.url().max(2_048).default(GOOGLE_REVOKE_URL),
+    /** The Gmail API's origin. */
+    GMAIL_API_BASE_URL: z.url().max(2_048).default(GMAIL_API_BASE_URL),
+    /** Where the provider sends the person back to; the portal receives it and completes the connection. */
+    MAIL_OAUTH_REDIRECT_URI: z.url().max(2_048).optional(),
+    /** The secret that signs connect attempts (at least 32 characters). Required outside `local`. Never log it. */
+    MAIL_STATE_SECRET: z
+      .string()
+      .min(
+        MIN_MAIL_STATE_SECRET_LENGTH,
+        `must be at least ${MIN_MAIL_STATE_SECRET_LENGTH} characters`
+      )
+      .max(512)
+      .optional(),
+    /** A local AES key (base64 of 32 bytes) for sealing tokens; refused in staging and prod, where KMS replaces it. */
+    MAIL_SECRET_BOX_KEY: z
+      .string()
+      .regex(/^[A-Za-z0-9+/]{43}=$/, 'must be base64 of 32 bytes')
+      .optional(),
+    /** The longest one call to a Mailbox provider may take, in ms. */
+    MAIL_CALL_TIMEOUT_MS: integer(100, 60_000).default(10_000),
+    /** The most times one repeatable call to a Mailbox provider is tried (the first included). */
+    MAIL_CALL_MAX_TRIES: integer(1, 5).default(3),
+    /** The first retry delay of a Mailbox provider call, in ms; it doubles per try, jittered. */
+    MAIL_RETRY_BASE_MS: integer(1, 60_000).default(200),
   })
   .refine((env) => env.SHUTDOWN_GRACE_MS + env.SHUTDOWN_TIMEOUT_MS <= MAX_SHUTDOWN_TOTAL_MS, {
     message: `SHUTDOWN_GRACE_MS plus SHUTDOWN_TIMEOUT_MS must not exceed ${MAX_SHUTDOWN_TOTAL_MS} ms in total`,
@@ -173,6 +233,39 @@ const schema = z
         message: 'CORE_INTERNAL_SECRET is required when CORE_URL is set',
       })
     }
+    if (env.GOOGLE_CLIENT_ID !== undefined) {
+      if (env.GOOGLE_CLIENT_SECRET === undefined) {
+        context.addIssue({
+          code: 'custom',
+          path: ['GOOGLE_CLIENT_SECRET'],
+          message: 'GOOGLE_CLIENT_SECRET is required when GOOGLE_CLIENT_ID is set',
+        })
+      }
+      if (env.MAIL_OAUTH_REDIRECT_URI === undefined && env.ENVIRONMENT !== 'local') {
+        context.addIssue({
+          code: 'custom',
+          path: ['MAIL_OAUTH_REDIRECT_URI'],
+          message: 'MAIL_OAUTH_REDIRECT_URI is required when GOOGLE_CLIENT_ID is set',
+        })
+      }
+    }
+    if (env.ENVIRONMENT === 'staging' || env.ENVIRONMENT === 'prod') {
+      if (env.MAIL_SECRET_BOX_KEY !== undefined) {
+        context.addIssue({
+          code: 'custom',
+          path: ['MAIL_SECRET_BOX_KEY'],
+          message: 'MAIL_SECRET_BOX_KEY is accepted only when ENVIRONMENT is local or dev',
+        })
+      }
+    }
+    if (env.ENVIRONMENT !== 'local') {
+      for (const key of MAIL_ENDPOINT_KEYS) {
+        const value = env[key]
+        if (value !== undefined && !value.startsWith('https://')) {
+          context.addIssue({ code: 'custom', path: [key], message: `${key} must be https` })
+        }
+      }
+    }
     if (env.QUEUE_ENDPOINT !== undefined && env.QUEUE_URL === undefined) {
       context.addIssue({
         code: 'custom',
@@ -189,6 +282,8 @@ const schema = z
     AUTH_ISSUER: env.AUTH_ISSUER ?? LOCAL_AUTH_ORIGIN,
     AUTH_AUDIENCE: env.AUTH_AUDIENCE ?? DEFAULT_AUTH_AUDIENCE,
     AWS_REGION: env.AWS_REGION ?? LOCAL_AWS_REGION,
+    MAIL_STATE_SECRET: env.MAIL_STATE_SECRET ?? LOCAL_MAIL_STATE_SECRET,
+    MAIL_OAUTH_REDIRECT_URI: env.MAIL_OAUTH_REDIRECT_URI ?? LOCAL_MAIL_REDIRECT_URI,
   }))
 
 /** The validated process configuration. */

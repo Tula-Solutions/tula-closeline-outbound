@@ -82,6 +82,16 @@ export function describeMailboxStore(label: string, make: () => MailboxStore): v
       expect(await store.readTokens(o, record.id)).toEqual(newStoredTokens())
     })
 
+    test('finds a Mailbox by its address, in its own Organization only', async () => {
+      const store = make()
+      const o = org()
+      const record = newMailboxRecord()
+      await store.connect(o, record, newStoredTokens())
+      expect((await store.findByAddress(o, 'gmail', record.address))?.id).toBe(record.id)
+      expect(await store.findByAddress(o, 'outlook', record.address)).toBeNull()
+      expect(await store.findByAddress(org(), 'gmail', record.address)).toBeNull()
+    })
+
     test('disconnect deletes the tokens, sets the reason, and repeats as a no-op', async () => {
       const store = make()
       const o = org()
