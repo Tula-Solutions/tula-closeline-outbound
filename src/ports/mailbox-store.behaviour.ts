@@ -250,25 +250,28 @@ export function describeMailboxStore(label: string, make: () => MailboxStore): v
       expect(await store.consumeAttempt(a, user, attempt.stateHash, at)).toBe(false)
     })
 
-    test('test sends are found by key, counted by window and kept on a repeat', async () => {
+    test('a test send key is claimed once, finished, released and counted', async () => {
       const store = make()
       const a = org()
       const record = newMailboxRecord()
       await store.connect(a, record, newStoredTokens())
       const key = 'c'.repeat(64)
-      expect(await store.findTestSend(a, record.id, key)).toBeNull()
-      const first = { providerMessageId: 'm1', sentAt: '2026-01-01T10:00:00.000Z' }
-      expect(await store.recordTestSend(a, record.id, key, first)).toEqual(first)
-      const kept = await store.recordTestSend(a, record.id, key, {
-        providerMessageId: 'm2',
-        sentAt: '2026-01-01T10:30:00.000Z',
+      const claim = { marker: 'pending', sentAt: '2026-01-01T10:00:00.000Z' }
+      expect(await store.claimTestSend(a, record.id, key, claim)).toEqual({ claimed: true })
+      expect(await store.claimTestSend(a, record.id, key, { ...claim, marker: 'other' })).toEqual({
+        claimed: false,
+        existing: claim,
       })
-      expect(kept).toEqual(first)
-      expect(await store.findTestSend(a, record.id, key)).toEqual(first)
-      expect(await store.findTestSend(org(), record.id, key)).toBeNull()
+      await store.finishTestSend(a, record.id, key, 'done')
+      expect(await store.claimTestSend(a, record.id, key, claim)).toEqual({
+        claimed: false,
+        existing: { ...claim, marker: 'done' },
+      })
       expect(await store.countTestSends(a, record.id, '2026-01-01T09:00:00.000Z')).toBe(1)
       expect(await store.countTestSends(a, record.id, '2026-01-01T10:00:01.000Z')).toBe(0)
       expect(await store.countTestSends(org(), record.id, '2026-01-01T09:00:00.000Z')).toBe(0)
+      await store.releaseTestSend(a, record.id, key)
+      expect(await store.claimTestSend(a, record.id, key, claim)).toEqual({ claimed: true })
     })
   })
 }

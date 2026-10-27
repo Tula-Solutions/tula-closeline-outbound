@@ -395,6 +395,71 @@ describe('test send', () => {
     expect(admin.status).toBe(200)
   })
 
+  test('two requests with the same new key send once', async () => {
+    const w = await world()
+    const mailbox = await w.connect(w.rep)
+    const key = 'test-send-key-race1'
+    const [a, b] = await Promise.all([
+      w.call('POST', path(mailbox.id), w.rep, { to: 'me@example.com' }, key),
+      w.call('POST', path(mailbox.id), w.rep, { to: 'me@example.com' }, key),
+    ])
+    expect(w.t.deps.mail.accepted()).toHaveLength(1)
+    // The second is either a replay (200) or told the first is still running (409).
+    for (const r of [a, b]) {
+      expect(r.status === 200 || codeOf(r.body) === 'request.idempotency_in_progress').toBe(true)
+    }
+    const after = await w.call('POST', path(mailbox.id), w.rep, { to: 'me@example.com' }, key)
+    expect(after.status).toBe(200)
+    expect(w.t.deps.mail.accepted()).toHaveLength(1)
+  })
+
+  test('a reused key with another recipient or subject is request.idempotency_key_reused', async () => {
+    const w = await world()
+    const mailbox = await w.connect(w.rep)
+    const key = 'test-send-key-reuse'
+    await w.call('POST', path(mailbox.id), w.rep, { to: 'me@example.com' }, key)
+    const other = await w.call('POST', path(mailbox.id), w.rep, { to: 'you@example.com' }, key)
+    expect(codeOf(other.body)).toBe('request.idempotency_key_reused')
+    const subject = await w.call(
+      'POST',
+      path(mailbox.id),
+      w.rep,
+      { to: 'me@example.com', subject: 'Hi' },
+      key
+    )
+    expect(codeOf(subject.body)).toBe('request.idempotency_key_reused')
+    expect(w.t.deps.mail.accepted()).toHaveLength(1)
+  })
+
+  test('a failed send releases the key so a retry can send', async () => {
+    const w = await world()
+    const mailbox = await w.connect(w.rep)
+    const key = 'test-send-key-fail1'
+    w.t.deps.mail.failProvider(1)
+    const failed = await w.call('POST', path(mailbox.id), w.rep, { to: 'me@example.com' }, key)
+    expect(failed.status).toBe(503)
+    const retry = await w.call('POST', path(mailbox.id), w.rep, { to: 'me@example.com' }, key)
+    expect(retry.status).toBe(200)
+    expect(w.t.deps.mail.accepted()).toHaveLength(1)
+  })
+
+  test('a failure after the provider accepted the mail keeps the claim, so a retry does not resend', async () => {
+    const w = await world()
+    const mailbox = await w.connect(w.rep)
+    const store = w.t.deps.mailboxes.store
+    const finish = store.finishTestSend
+    store.finishTestSend = async () => {
+      throw new Error('store down')
+    }
+    const key = 'test-send-key-fin01'
+    const failed = await w.call('POST', path(mailbox.id), w.rep, { to: 'me@example.com' }, key)
+    expect(failed.status).toBe(500)
+    store.finishTestSend = finish
+    const retry = await w.call('POST', path(mailbox.id), w.rep, { to: 'me@example.com' }, key)
+    expect(codeOf(retry.body)).toBe('request.idempotency_in_progress')
+    expect(w.t.deps.mail.accepted()).toHaveLength(1)
+  })
+
   test('a disconnected Mailbox is not connected, a revoked one is auth_revoked', async () => {
     const w = await world()
     const mailbox = await w.connect(w.rep)

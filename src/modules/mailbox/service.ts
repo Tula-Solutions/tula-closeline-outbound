@@ -569,13 +569,10 @@ export async function testSend(
   if (!mayAll && record.ownerMembershipId !== view.me) {
     throw domainError(ERRORS['auth.forbidden'])
   }
-  const keyHash = Buffer.from(
-    new Bun.CryptoHasher('sha256').update(idempotencyKey).digest()
-  ).toString('hex')
-  const done = await deps.store.findTestSend(caller.organizationId, id, keyHash)
-  if (done !== null) {
-    return done
-  }
+  const sha = (text: string) =>
+    Buffer.from(new Bun.CryptoHasher('sha256').update(text).digest()).toString('hex')
+  const keyHash = sha(idempotencyKey)
+  const requestHash = sha(JSON.stringify([body.to, body.subject ?? null]))
   if (record.state === 'disconnected') {
     throw mailError(
       record.stateReason === 'auth_revoked' ? 'mailbox.auth_revoked' : 'mailbox.not_connected'
@@ -585,24 +582,51 @@ export async function testSend(
     throw mailError('mailbox.paused')
   }
   const now = deps.clock.now()
-  const recent = await deps.store.countTestSends(
-    caller.organizationId,
-    id,
-    new Date(now.getTime() - TEST_SEND_WINDOW_MS).toISOString()
-  )
-  if (recent >= TEST_SENDS_PER_HOUR) {
-    throw new RetryAfterError(ERRORS['rate.limited'], TEST_SEND_WINDOW_MS / 1000)
-  }
-  // shortcut: the key alone decides a replay (a reused key with another `to` answers the first result), and failed sends are not counted toward the cap; store a request hash and a reservation row to close both.
-  // shortcut: two requests with the same new key at the same instant can both send (the provider id is only known after the send); add a reservation row if that matters.
-  const sent = await sendThrough(deps, caller.organizationId, id, {
-    from: { address: record.address, name: record.displayName },
-    to: body.to,
-    subject: body.subject ?? TEST_SEND_SUBJECT,
-    text: TEST_SEND_TEXT,
-  })
-  return deps.store.recordTestSend(caller.organizationId, id, keyHash, {
-    providerMessageId: sent.providerMessageId,
+  // The marker is `<request hash>:` while the send runs and `<request hash>:<provider id>` after.
+  const claim = await deps.store.claimTestSend(caller.organizationId, id, keyHash, {
+    marker: `${requestHash}:`,
     sentAt: now.toISOString(),
   })
+  if (!claim.claimed) {
+    const marker = claim.existing.marker
+    const seen = marker.slice(0, marker.indexOf(':'))
+    const providerMessageId = marker.slice(marker.indexOf(':') + 1)
+    if (seen !== requestHash) {
+      throw domainError(ERRORS['request.idempotency_key_reused'])
+    }
+    if (providerMessageId === '') {
+      throw new RetryAfterError(ERRORS['request.idempotency_in_progress'], 1, { retryAfter: 1 })
+    }
+    return { providerMessageId, sentAt: claim.existing.sentAt }
+  }
+  let sent: SentMessage
+  try {
+    // The claim itself is counted, hence `>`.
+    const recent = await deps.store.countTestSends(
+      caller.organizationId,
+      id,
+      new Date(now.getTime() - TEST_SEND_WINDOW_MS).toISOString()
+    )
+    if (recent > TEST_SENDS_PER_HOUR) {
+      throw new RetryAfterError(ERRORS['rate.limited'], TEST_SEND_WINDOW_MS / 1000)
+    }
+    sent = await sendThrough(deps, caller.organizationId, id, {
+      from: { address: record.address, name: record.displayName },
+      to: body.to,
+      subject: body.subject ?? TEST_SEND_SUBJECT,
+      text: TEST_SEND_TEXT,
+    })
+  } catch (error) {
+    // shortcut: failed sends are released, so they do not count toward the cap, and a process that dies mid-send leaves its key pending (in_progress) until the caller uses a new key; add a claim expiry and a failure count if that matters.
+    await deps.store.releaseTestSend(caller.organizationId, id, keyHash).catch(() => undefined)
+    throw error
+  }
+  // Past this point the mail is out: a failure here keeps the claim pending rather than allow a resend.
+  await deps.store.finishTestSend(
+    caller.organizationId,
+    id,
+    keyHash,
+    `${requestHash}:${sent.providerMessageId}`
+  )
+  return { providerMessageId: sent.providerMessageId, sentAt: now.toISOString() }
 }

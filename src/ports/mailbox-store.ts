@@ -81,8 +81,8 @@ export type StoredAttempt = {
   expiresAt: string
 }
 
-/** A test send as stored: what the provider answered for one Idempotency-Key. */
-export type StoredTestSend = { providerMessageId: string; sentAt: string }
+/** A test send as stored: an opaque `marker` the service writes (pending, then final) and when it was claimed. */
+export type StoredTestSend = { marker: string; sentAt: string }
 
 /** The store of Mailboxes and their sealed tokens; every call is scoped to one Organization. */
 export type MailboxStore = {
@@ -140,19 +140,25 @@ export type MailboxStore = {
     stateHash: string,
     at: string
   ) => Promise<boolean>
-  /** The test send already made under this key hash, or null. */
-  findTestSend: (
-    organizationId: OrganizationId,
-    id: MailboxId,
-    keyHash: string
-  ) => Promise<StoredTestSend | null>
   /** How many test sends the Mailbox made at or after `since`. */
   countTestSends: (organizationId: OrganizationId, id: MailboxId, since: string) => Promise<number>
-  /** Records a test send; if the key hash already has one, that one is kept and returned. */
-  recordTestSend: (
+  /**
+   * Claims a key for a test send: `{ claimed: true }` for the first caller, otherwise the claim
+   * already there (pending or final). Atomic per key.
+   */
+  claimTestSend: (
     organizationId: OrganizationId,
     id: MailboxId,
     keyHash: string,
-    send: StoredTestSend
-  ) => Promise<StoredTestSend>
+    claim: StoredTestSend
+  ) => Promise<{ claimed: true } | { claimed: false; existing: StoredTestSend }>
+  /** Writes the final marker onto a claim. */
+  finishTestSend: (
+    organizationId: OrganizationId,
+    id: MailboxId,
+    keyHash: string,
+    marker: string
+  ) => Promise<void>
+  /** Deletes a claim so the key can be tried again (the send failed). */
+  releaseTestSend: (organizationId: OrganizationId, id: MailboxId, keyHash: string) => Promise<void>
 }

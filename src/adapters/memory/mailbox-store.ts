@@ -140,21 +140,32 @@ export function createMemoryMailboxStore(): MailboxStore {
       return true
     },
 
-    async findTestSend(organizationId, id, keyHash) {
-      return testSends.get(`${organizationId}/${id}/${keyHash}`) ?? null
-    },
-
     async countTestSends(organizationId, id, since) {
       return [...testSends.entries()].filter(
         ([k, v]) => k.startsWith(`${organizationId}/${id}/`) && v.sentAt >= since
       ).length
     },
 
-    async recordTestSend(organizationId, id, keyHash, send) {
+    async claimTestSend(organizationId, id, keyHash, claim) {
       const k = `${organizationId}/${id}/${keyHash}`
-      const kept = testSends.get(k) ?? send
-      testSends.set(k, kept)
-      return kept
+      const existing = testSends.get(k)
+      if (existing !== undefined) {
+        return { claimed: false, existing }
+      }
+      testSends.set(k, claim)
+      return { claimed: true }
+    },
+
+    async finishTestSend(organizationId, id, keyHash, marker) {
+      const k = `${organizationId}/${id}/${keyHash}`
+      const row = testSends.get(k)
+      if (row !== undefined) {
+        testSends.set(k, { ...row, marker })
+      }
+    },
+
+    async releaseTestSend(organizationId, id, keyHash) {
+      testSends.delete(`${organizationId}/${id}/${keyHash}`)
     },
   }
 }

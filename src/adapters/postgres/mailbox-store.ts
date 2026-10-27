@@ -82,23 +82,12 @@ async function loadRecord(tx: Transaction, organizationId: string, id: string) {
   return row === undefined ? null : recordOf(row.mailbox, row.limits)
 }
 
-async function findTestSend(tx: Transaction, organizationId: string, id: string, keyHash: string) {
-  const [row] = await tx
-    .select({
-      providerMessageId: mailboxTestSends.providerMessageId,
-      sentAt: mailboxTestSends.sentAt,
-    })
-    .from(mailboxTestSends)
-    .where(
-      and(
-        eq(mailboxTestSends.organizationId, organizationId),
-        eq(mailboxTestSends.mailboxId, id),
-        eq(mailboxTestSends.keyHash, keyHash)
-      )
-    )
-  return row === undefined
-    ? null
-    : { providerMessageId: row.providerMessageId, sentAt: row.sentAt.toISOString() }
+function testSendKey(organizationId: string, id: string, keyHash: string) {
+  return and(
+    eq(mailboxTestSends.organizationId, organizationId),
+    eq(mailboxTestSends.mailboxId, id),
+    eq(mailboxTestSends.keyHash, keyHash)
+  )
 }
 
 function limitColumns(record: MailboxRecord) {
@@ -367,9 +356,6 @@ export function createPostgresMailboxStore(inOrganization: InOrganization): Mail
         return used.length > 0
       }),
 
-    findTestSend: (organizationId, id, keyHash) =>
-      inOrganization(organizationId, (tx) => findTestSend(tx, organizationId, id, keyHash)),
-
     countTestSends: (organizationId, id, since) =>
       inOrganization(organizationId, async (tx) => {
         const [row] = await tx
@@ -385,23 +371,46 @@ export function createPostgresMailboxStore(inOrganization: InOrganization): Mail
         return row?.n ?? 0
       }),
 
-    recordTestSend: (organizationId, id, keyHash, send) =>
+    claimTestSend: (organizationId, id, keyHash, claim) =>
       inOrganization(organizationId, async (tx) => {
-        await tx
+        const inserted = await tx
           .insert(mailboxTestSends)
           .values({
             organizationId,
             mailboxId: id,
             keyHash,
-            providerMessageId: send.providerMessageId,
-            sentAt: new Date(send.sentAt),
+            providerMessageId: claim.marker,
+            sentAt: new Date(claim.sentAt),
           })
           .onConflictDoNothing()
-        const kept = await findTestSend(tx, organizationId, id, keyHash)
-        if (kept === null) {
-          throw new Error('test send vanished inside its own transaction')
+          .returning({ keyHash: mailboxTestSends.keyHash })
+        if (inserted.length > 0) {
+          return { claimed: true } as const
         }
-        return kept
+        const [row] = await tx
+          .select({ marker: mailboxTestSends.providerMessageId, sentAt: mailboxTestSends.sentAt })
+          .from(mailboxTestSends)
+          .where(testSendKey(organizationId, id, keyHash))
+        if (row === undefined) {
+          throw new Error('test send claim vanished inside its own transaction')
+        }
+        return {
+          claimed: false,
+          existing: { marker: row.marker, sentAt: row.sentAt.toISOString() },
+        } as const
+      }),
+
+    finishTestSend: (organizationId, id, keyHash, marker) =>
+      inOrganization(organizationId, async (tx) => {
+        await tx
+          .update(mailboxTestSends)
+          .set({ providerMessageId: marker })
+          .where(testSendKey(organizationId, id, keyHash))
+      }),
+
+    releaseTestSend: (organizationId, id, keyHash) =>
+      inOrganization(organizationId, async (tx) => {
+        await tx.delete(mailboxTestSends).where(testSendKey(organizationId, id, keyHash))
       }),
   }
 }
