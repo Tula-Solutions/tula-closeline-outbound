@@ -270,7 +270,7 @@ export async function completeConnect(
     Math.floor(nowDate.getTime() / 1000)
   )
   if (attempt === null) {
-    // An attempt that expired after it was completed still answers its Mailbox.
+    // A forged, foreign or expired attempt (a replay after the window included) is refused.
     throw mailError('mailbox.oauth_state_invalid')
   }
   const derivedId = mailboxIdOf(caller.organizationId, attempt.nonce)
