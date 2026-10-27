@@ -339,6 +339,7 @@ export function createPostgresEnrichmentStore(inOrganization: InOrganization): E
           })
           .returning({ id: enrichmentReservations.id })
         if (inserted === undefined) {
+          // Unreachable in practice: the key ends in a fresh random uuid. Never hold budget silently.
           throw new Error('reservation key taken')
         }
         return { month, priceMicros, holdKey }
