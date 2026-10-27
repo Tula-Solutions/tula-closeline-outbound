@@ -21,6 +21,7 @@ import {
   mintTestToken,
   type VirtualTime,
 } from 'tula-closeline-kit/testing'
+import { createMemoryCampaignStore } from '~/adapters/memory/campaign-store'
 import { createMemoryCore, type MemoryCore } from '~/adapters/memory/core'
 import { createMemoryProviderConfig } from '~/adapters/memory/provider-config'
 import type { MemoryProvider, MemoryVerifier } from '~/adapters/memory/providers'
@@ -132,6 +133,12 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     },
   }
 
+  const campaigns: Container['campaigns'] = {
+    store: createMemoryCampaignStore(),
+    access: core.access,
+    clock: time.clock,
+  }
+
   return {
     env,
     logger,
@@ -144,6 +151,7 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     queue,
     processed,
     enrichment,
+    campaigns,
     core,
     config,
     store,

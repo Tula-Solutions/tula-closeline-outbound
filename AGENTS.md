@@ -49,6 +49,17 @@ The shape in `.claude/COMMON.md` is built; add modules under `src/modules/<name>
 outside `local`; the adapter is `src/adapters/http/core.ts`), `CORE_CALL_TIMEOUT_MS`,
 `CORE_CALL_MAX_TRIES`. Add a key in both files.
 
+## Campaigns (`src/modules/campaign`)
+
+Campaigns and their Sequence versions (`/v1/campaigns`). The store port is `ports/campaign-store.ts`
+(memory and Postgres adapters). A Rep sees their own Campaigns, a Manager their Team's, an Admin
+and owner all; outside the view a Campaign is `campaign.not_found`. Saving a Sequence writes a new
+version after graph and variant-weight checks (`campaign.invalid_sequence` names the Step); a
+running Campaign accepts it and the version applies to new Steps only. Every mutating call needs an
+`Idempotency-Key`. The Rep's membership id comes from `CoreAccess.membershipIdOf`, which is a fake
+mapping until core exposes it; the database has no column for automatic variant promotion, so only
+`promotion.mode: 'manual'` is accepted.
+
 ## Hot paths
 
 `POST /v1/enrichment-runs` (`bench/enrichment.bench.test.ts`): O(k) in the Prospects named (at most

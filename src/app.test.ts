@@ -22,6 +22,12 @@ test('the app serves its OpenAPI document describing every route and the error b
   expect(Object.keys(document.paths).sort()).toEqual([
     '/healthz',
     '/readyz',
+    '/v1/campaigns',
+    '/v1/campaigns/{campaignId}',
+    '/v1/campaigns/{campaignId}/archive',
+    '/v1/campaigns/{campaignId}/duplicate',
+    '/v1/campaigns/{campaignId}/pause',
+    '/v1/campaigns/{campaignId}/sequence',
     '/v1/enrichment-run-sets/{runSetId}',
     '/v1/enrichment-runs',
     '/v1/enrichment-runs/{runId}',
