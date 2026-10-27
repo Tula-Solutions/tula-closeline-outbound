@@ -20,6 +20,7 @@ import { type Consumer, createSqsQueue } from 'tula-closeline-kit/queue'
 import { createMemoryQueue } from 'tula-closeline-kit/testing'
 import { createHttpCoreProspects } from '~/adapters/http/core'
 import { createMemoryCore } from '~/adapters/memory/core'
+import { createPostgresCampaignStore } from '~/adapters/postgres/campaign-store'
 import { createPostgresProviderConfig } from '~/adapters/postgres/provider-config'
 import { createPostgresEnrichmentStore } from '~/adapters/postgres/store'
 import { createOutboundConsumer } from '~/consumer'
@@ -27,6 +28,7 @@ import { describeError } from '~/describe-error'
 import { type Env, loadEnv } from '~/env'
 import { SERVICE } from '~/info'
 import { type OutboundEnvelope, registry } from '~/messages'
+import type { CampaignDeps } from '~/modules/campaign/deps'
 import type { EnrichmentDeps } from '~/modules/enrichment/deps'
 import { enrichmentHandlers } from '~/modules/enrichment/handlers'
 import type { CredentialVault } from '~/ports/provider-config'
@@ -67,6 +69,8 @@ export type Container = {
   processed: ProcessedStore
   /** Everything the enrichment module needs; its service functions take this first. */
   enrichment: EnrichmentDeps
+  /** Everything the campaign module needs; its service functions take this first. */
+  campaigns: CampaignDeps
   /** The queue consumer; built here, started by `server.ts` and stopped on shutdown. */
   consumer: Consumer
   /** Probes run by `/readyz`: the database. */
@@ -157,7 +161,12 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
   })
   if (env.ENVIRONMENT !== 'local') {
     logger.warn('ports still on fakes', {
-      ports: ['core access check', 'enrichment providers', 'email verifiers'],
+      ports: [
+        'core access check',
+        'membership id and Team lookup',
+        'enrichment providers',
+        'email verifiers',
+      ],
     })
   }
   const inOrganization: Container['withOrganization'] = (organizationId, fn) =>
@@ -199,6 +208,11 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
       runLeaseSeconds: env.ENRICHMENT_RUN_LEASE_SECONDS,
     },
   }
+  const campaigns: CampaignDeps = {
+    store: createPostgresCampaignStore(inOrganization),
+    access: core.access,
+    clock: systemClock,
+  }
   const consumer = createOutboundConsumer({
     queue,
     store: processed,
@@ -222,6 +236,7 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     queue,
     processed,
     enrichment,
+    campaigns,
     consumer,
     readinessChecks: [
       {

@@ -1,6 +1,7 @@
 import type {
   EnrichedFieldName,
   FIELD_APPLICATIONS,
+  MembershipId,
   OrganizationId,
   ProspectId,
   ProviderKey,
@@ -68,4 +69,6 @@ export type CoreAccess = {
   ) => Promise<{ notVisible: ProspectId[]; withoutEmail: ProspectId[] }>
   /** The Reps on the Manager's Team, at most one page of them. */
   teamRepIds: (organizationId: OrganizationId, managerId: UserId) => Promise<readonly UserId[]>
+  /** The caller's Membership id in the Organization: the token carries the user, Campaigns are owned by the Membership. */
+  membershipIdOf: (organizationId: OrganizationId, userId: UserId) => Promise<MembershipId>
 }

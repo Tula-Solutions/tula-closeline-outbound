@@ -1,9 +1,11 @@
-import type {
-  EnrichedFieldName,
-  OrganizationId,
-  ProspectId,
-  ProviderKey,
-  UserId,
+import {
+  type EnrichedFieldName,
+  formatId,
+  type MembershipId,
+  type OrganizationId,
+  type ProspectId,
+  type ProviderKey,
+  type UserId,
 } from 'tula-closeline-contract'
 import {
   type AccessCaller,
@@ -23,6 +25,11 @@ type Stored = {
   sources: Map<EnrichedFieldName, string>
   suggestions: Map<EnrichedFieldName, { value: string; source: string }>
   replays: Map<string, { field: EnrichedFieldName; application: FieldApplication }[]>
+}
+
+/** The Membership id this fake core gives a user: the same hex under the `mem` prefix. */
+export function membershipOf(userId: UserId): MembershipId {
+  return formatId('mem', userId.slice(userId.indexOf('_') + 1))
 }
 
 /** What a test seeds a Prospect with. */
@@ -164,6 +171,9 @@ export function createMemoryCore(): MemoryCore {
       },
       async teamRepIds(organizationId, managerId) {
         return teams.get(`${organizationId}|${managerId}`) ?? []
+      },
+      async membershipIdOf(_organizationId, userId) {
+        return membershipOf(userId)
       },
     },
   }
