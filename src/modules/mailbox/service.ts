@@ -197,6 +197,7 @@ export async function startConnect(
   if (body.kind === 'shared' && caller.role !== 'owner' && caller.role !== 'admin') {
     throw domainError(ERRORS['auth.forbidden'])
   }
+  // shortcut: teamIds are not checked against the Organization's Teams (CoreAccess has no such call); add the check when core exposes one.
   if (body.teamIds.length > MAX_ATTEMPT_TEAMS) {
     throw domainError(ERRORS['request.invalid'])
   }
