@@ -323,6 +323,21 @@ describe('update', () => {
 })
 
 describe('duplicate', () => {
+  test('a retry with the same key still answers with the first copy after the source changed', async () => {
+    const w = await world()
+    const made = await w.create(w.rep, 'Original')
+    const key = 'duplicate-key-retry-0001'
+    const url = `/v1/campaigns/${made.id}/duplicate`
+    const first = await w.call('POST', url, w.rep, { name: 'Copy' }, key)
+    expect(first.status).toBe(201)
+    await w.call('PATCH', `/v1/campaigns/${made.id}`, w.rep, { dailyCap: 7 })
+    const retry = await w.call('POST', url, w.rep, { name: 'Copy' }, key)
+    expect(retry.status).toBe(200)
+    expect(retry.body.id).toBe(first.body.id)
+    const other = await w.call('POST', url, w.rep, { name: 'Different' }, key)
+    expect(codeOf(other.body)).toBe('request.idempotency_key_reused')
+  })
+
   test('copies settings, audience and Sequence into a new draft owned by the caller', async () => {
     const w = await world()
     const made = await w.create(w.rep, 'Original')

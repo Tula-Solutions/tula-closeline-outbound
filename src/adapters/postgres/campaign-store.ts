@@ -78,13 +78,13 @@ function rowOf(organizationId: string, campaign: Campaign) {
   }
 }
 
-/** Reads a Campaign row, locking it when `lock` is set so two changes never interleave. */
 /** A stored Step row. */
 type StepRow = typeof outboundSteps.$inferSelect
 
 /** A stored variant row. */
 type VariantRow = typeof outboundVariants.$inferSelect
 
+/** Reads a Campaign row, locking it when `lock` is set so two changes never interleave. */
 async function load(tx: Transaction, organizationId: string, id: string, lock: boolean) {
   const query = tx
     .select()

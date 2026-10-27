@@ -144,7 +144,7 @@ export async function create(
   return written
 }
 
-/** What a create or duplicate request fixes about the Campaign it makes. */
+/** What a create request fixes about the Campaign it makes. */
 function sameRequest(stored: Campaign, requested: Campaign): boolean {
   const fixed = (c: Campaign) => ({
     name: c.name,
@@ -276,7 +276,11 @@ export async function duplicate(
     sequence === null ? null : sequence.steps,
     view.me
   )
-  if (!written.created && !sameRequest(written.campaign, copy)) {
+  if (
+    !written.created &&
+    (written.campaign.name !== copy.name ||
+      written.campaign.ownerMembershipId !== copy.ownerMembershipId)
+  ) {
     throw domainError(ERRORS['request.idempotency_key_reused'])
   }
   return written
