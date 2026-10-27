@@ -47,7 +47,11 @@ The shape in `.claude/COMMON.md` is built; add modules under `src/modules/<name>
 `SHUTDOWN_TIMEOUT_MS`, `SHUTDOWN_GRACE_MS`, `MAX_REQUEST_BODY_BYTES`, `CORE_URL`,
 `CORE_INTERNAL_SECRET` (core's Prospect read and write-back go over HTTP when `CORE_URL` is set or
 outside `local`; the adapter is `src/adapters/http/core.ts`), `CORE_CALL_TIMEOUT_MS`,
-`CORE_CALL_MAX_TRIES`. Add a key in both files.
+`CORE_CALL_MAX_TRIES`, and for Mailboxes `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`,
+`GOOGLE_AUTH_URL`, `GOOGLE_TOKEN_URL`, `GOOGLE_REVOKE_URL`, `GMAIL_API_BASE_URL`,
+`MAIL_OAUTH_REDIRECT_URI`, `MAIL_STATE_SECRET` (required outside `local`), `MAIL_SECRET_BOX_KEY`
+(a local-only key, refused in staging and prod), `MAIL_CALL_TIMEOUT_MS`, `MAIL_CALL_MAX_TRIES`,
+`MAIL_RETRY_BASE_MS`. Add a key in both files.
 
 ## Campaigns (`src/modules/campaign`)
 
@@ -59,6 +63,22 @@ running Campaign accepts it and the version applies to new Steps only. Every mut
 `Idempotency-Key`. The Rep's membership id comes from `CoreAccess.membershipIdOf`, which is a fake
 mapping until core exposes it; the database has no column for automatic variant promotion, so only
 `promotion.mode: 'manual'` is accepted.
+
+## Mailboxes (`src/modules/mailbox`)
+
+Connect, list and disconnect Gmail Mailboxes (`/v1/mailboxes`). Ports: `mail-transport.ts` (memory
+and Gmail adapters, one shared behaviour suite), `mailbox-store.ts` (memory and Postgres) and
+`secret-box.ts` (tokens are sealed with the Organization, Mailbox and purpose as context; the AES
+adapter takes a local key, KMS comes with infra). Start returns the consent URL with a signed,
+expiring `state` (HMAC, bound to Organization and user, no table); complete verifies it, exchanges
+the code with a derived PKCE verifier and stores the Mailbox under an id derived from the attempt,
+so a repeat answers the same Mailbox with 200. Tokens never appear in a response, log or error
+report. A revoked grant (`MailTransportError('grant_invalid')`) disconnects the Mailbox with reason
+`auth_revoked`, deletes its tokens and publishes `mailbox.state_changed` through `deps.events`
+(logged only until the service has an event bus). `accessTokenFor` and `sendThrough` are the
+functions the send path uses; sending is never retried after an unknown outcome. A Rep sees their
+own Mailboxes, a Manager their Team's, an Owner or Admin all; shared Mailboxes are Owner/Admin only.
+A live Gmail test runs only when `GMAIL_LIVE_REFRESH_TOKEN` is set.
 
 ## Hot paths
 

@@ -8,6 +8,7 @@ import type { AppEnv } from '~/http/types'
 import { createCampaignRouter } from '~/modules/campaign/router'
 import { createEnrichmentRouter } from '~/modules/enrichment/router'
 import { createHealthRouter } from '~/modules/health/router'
+import { createMailboxRouter } from '~/modules/mailbox/router'
 import { serveOpenApi } from '~/openapi'
 
 /**
@@ -25,6 +26,7 @@ export function createApp(container: Container): OpenAPIHono<AppEnv> {
   publicRoutes.use('/v1/*', authenticate(container))
   publicRoutes.route('/', createEnrichmentRouter(container.enrichment))
   publicRoutes.route('/', createCampaignRouter(container.campaigns))
+  publicRoutes.route('/', createMailboxRouter(container.mailboxes))
   app.route('/', publicRoutes)
 
   serveOpenApi(app)

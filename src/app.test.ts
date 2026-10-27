@@ -31,6 +31,11 @@ test('the app serves its OpenAPI document describing every route and the error b
     '/v1/enrichment-run-sets/{runSetId}',
     '/v1/enrichment-runs',
     '/v1/enrichment-runs/{runId}',
+    '/v1/mailboxes',
+    '/v1/mailboxes/connect',
+    '/v1/mailboxes/connect/complete',
+    '/v1/mailboxes/{mailboxId}',
+    '/v1/mailboxes/{mailboxId}/test-send',
   ])
   expect(document.paths['/healthz']?.get?.responses['500']).toBeDefined()
   expect(document.paths['/readyz']?.get?.responses['503']).toBeDefined()
