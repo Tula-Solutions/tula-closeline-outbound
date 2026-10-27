@@ -131,3 +131,20 @@ test('outside local, the core address and the shared secret are required, by nam
   expect(() => loadEnv({ ENVIRONMENT: 'prod' })).toThrow(/CORE_URL.*is required/s)
   expect(() => loadEnv({ ENVIRONMENT: 'prod' })).toThrow(/CORE_INTERNAL_SECRET.*is required/s)
 })
+
+test('a run lease no longer than the worst-case provider attempt time is rejected, naming the key', () => {
+  // 3 tries of 10 s, plus backoff of 1 s and 2 s at 1.5x jitter: 34.5 s at worst.
+  const source = {
+    ENVIRONMENT: 'local',
+    ENRICHMENT_PROVIDER_TIMEOUT_MS: '10000',
+    ENRICHMENT_PROVIDER_MAX_TRIES: '3',
+    ENRICHMENT_RETRY_BASE_MS: '1000',
+  }
+
+  expect(() => loadEnv({ ...source, ENRICHMENT_RUN_LEASE_SECONDS: '34' })).toThrow(
+    /ENRICHMENT_RUN_LEASE_SECONDS/
+  )
+  expect(
+    loadEnv({ ...source, ENRICHMENT_RUN_LEASE_SECONDS: '35' }).ENRICHMENT_RUN_LEASE_SECONDS
+  ).toBe(35)
+})

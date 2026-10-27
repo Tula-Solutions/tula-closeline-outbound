@@ -12,6 +12,7 @@ import * as Waterfall from '~/modules/enrichment/waterfall'
 import { CoreProspectNotFoundError } from '~/ports/core'
 import { ProviderError } from '~/ports/enrichment-provider'
 import type { ProviderSetting } from '~/ports/provider-config'
+import { LeaseLostError } from '~/ports/store'
 import {
   createTestApp,
   newOrganizationId,
@@ -966,6 +967,62 @@ describe('the run lease', () => {
     expect(w.t.deps.core.writeCalls()).toBe(1)
     const month = Waterfall.monthOf(w.t.deps.clock.now())
     expect(await w.t.deps.store.monthSpend(w.organizationId, month)).toBe(10_000)
+  })
+
+  test('renewing the lease keeps the token and the true start time', async () => {
+    const w = await world({
+      providers: [createMemoryProvider({ key: key('alpha'), groups: ['person'] })],
+      settings: [setting('alpha', 1)],
+    })
+    const created = await w.post({ prospectIds: [w.prospectId], groups: ['person'] })
+    const [run] = await w.runsOf((created.body as { id: string }).id)
+    if (run === undefined) {
+      throw new Error('no run')
+    }
+    const store = w.t.deps.store
+    const now = w.t.deps.clock.now()
+    const claim = await store.claim(w.organizationId, run.id, now, 120)
+    if (claim.kind !== 'claimed') {
+      throw new Error('not claimed')
+    }
+    const later = new Date(now.getTime() + 60_000)
+
+    const lease = await store.renewLease(w.organizationId, run.id, claim.lease, later)
+
+    expect(lease).toBe(claim.lease)
+    expect((await w.run(run.id)).startedAt).toBe(now.toISOString())
+    const again = await store.claim(
+      w.organizationId,
+      run.id,
+      new Date(later.getTime() + 61_000),
+      120
+    )
+    expect(again.kind).toBe('busy')
+  })
+
+  test('a new claim after the lease ran out issues a new token and fences the old one', async () => {
+    const w = await world({
+      providers: [createMemoryProvider({ key: key('alpha'), groups: ['person'] })],
+      settings: [setting('alpha', 1)],
+    })
+    const created = await w.post({ prospectIds: [w.prospectId], groups: ['person'] })
+    const [run] = await w.runsOf((created.body as { id: string }).id)
+    if (run === undefined) {
+      throw new Error('no run')
+    }
+    const store = w.t.deps.store
+    const now = w.t.deps.clock.now()
+    const first = await store.claim(w.organizationId, run.id, now, 120)
+    const later = new Date(now.getTime() + 121_000)
+    const second = await store.claim(w.organizationId, run.id, later, 120)
+    if (first.kind !== 'claimed' || second.kind !== 'claimed') {
+      throw new Error('not claimed')
+    }
+
+    expect(second.lease).not.toBe(first.lease)
+    await expect(
+      store.renewLease(w.organizationId, run.id, first.lease, later)
+    ).rejects.toBeInstanceOf(LeaseLostError)
   })
 
   test('the lease is renewed between provider calls, so a long run is not taken from its worker', async () => {

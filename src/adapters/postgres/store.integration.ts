@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test'
+import { and, eq } from 'drizzle-orm'
 import {
   formatId,
   type OrganizationId,
@@ -6,6 +7,7 @@ import {
   type ProviderKey,
 } from 'tula-closeline-contract'
 import { createDb, withOrganization } from 'tula-closeline-db'
+import { enrichmentReservations, enrichmentRuns, enrichmentSpend } from 'tula-closeline-db/schema'
 import { createMemoryProvider } from '~/adapters/memory/providers'
 import { integrationUrls } from '~/integration-support'
 import * as Service from '~/modules/enrichment/service'
@@ -179,6 +181,53 @@ describe('the Postgres enrichment store', () => {
     expect(reservation.month).toBe(MONTH)
     expect(await store.monthSpend(org, MONTH)).toBe(0)
     expect(await store.monthSpend(org, '2026-04-01')).toBe(0)
+  })
+
+  test('renewing keeps the lease token and the start time, and moves only the heartbeat', async () => {
+    const org = newOrganizationId()
+    const { run, lease } = await claimedRun(org, 'req-heartbeat')
+    const later = new Date(NOW.getTime() + 60_000)
+
+    const renewed = await store.renewLease(org, run.id, lease, later)
+
+    expect(renewed).toBe(lease)
+    const [row] = await withOrganization(database.db, org, (tx) =>
+      tx.select().from(enrichmentRuns).where(eq(enrichmentRuns.id, run.id))
+    )
+    expect(row?.leaseToken).toBe(lease)
+    expect(row?.startedAt?.toISOString()).toBe(NOW.toISOString())
+    expect(row?.heartbeatAt?.toISOString()).toBe(later.toISOString())
+    const busy = await store.claim(org, run.id, new Date(later.getTime() + 61_000), 120)
+    expect(busy.kind).toBe('busy')
+  })
+
+  test('a reservation is its own row: released rows stop counting and spend never holds hold_ keys', async () => {
+    const org = newOrganizationId()
+    const { run, lease } = await claimedRun(org, 'req-rows')
+    const reservation = await store.reserveSpend(org, reserve(run, lease, 10_000, 1_000_000))
+    if (reservation === null) {
+      throw new Error('refused')
+    }
+    const rows = () =>
+      withOrganization(database.db, org, (tx) =>
+        tx
+          .select()
+          .from(enrichmentReservations)
+          .where(and(eq(enrichmentReservations.runId, run.id)))
+      )
+    expect(await store.monthSpend(org, MONTH)).toBe(10_000)
+    expect((await rows()).map((row) => row.releasedAt)).toEqual([null])
+
+    await store.releaseSpend(org, run.id, lease, reservation)
+
+    const [released] = await rows()
+    expect(released?.releasedAt).not.toBeNull()
+    expect(released?.amountMicros).toBe(10_000)
+    expect(await store.monthSpend(org, MONTH)).toBe(0)
+    const spendRows = await withOrganization(database.db, org, (tx) =>
+      tx.select().from(enrichmentSpend).where(eq(enrichmentSpend.organizationId, org))
+    )
+    expect(spendRows).toEqual([])
   })
 
   test('a worker that lost its lease cannot reserve, record, renew or finish', async () => {

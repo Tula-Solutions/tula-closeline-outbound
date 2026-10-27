@@ -46,6 +46,20 @@ const MIN_INTERNAL_SECRET_LENGTH = 32
 /** The most grace plus drain may add up to, so an orchestrator's kill window is not outlasted. */
 const MAX_SHUTDOWN_TOTAL_MS = 60_000
 
+/**
+ * The longest one provider step can take, in ms: every try runs to its timeout, and each retry
+ * waits the base delay doubled per try at the top of the waterfall's 0.5x to 1.5x jitter.
+ */
+function worstProviderAttemptMs(env: {
+  ENRICHMENT_PROVIDER_TIMEOUT_MS: number
+  ENRICHMENT_PROVIDER_MAX_TRIES: number
+  ENRICHMENT_RETRY_BASE_MS: number
+}): number {
+  const tries = env.ENRICHMENT_PROVIDER_MAX_TRIES
+  const backoff = 1.5 * env.ENRICHMENT_RETRY_BASE_MS * (2 ** (tries - 1) - 1)
+  return env.ENRICHMENT_PROVIDER_TIMEOUT_MS * tries + backoff
+}
+
 const schema = z
   .object({
     /** Which deployment this is. No default: a deploy that forgets it must fail at boot. */
@@ -128,6 +142,12 @@ const schema = z
   .refine((env) => env.CONSUMER_STOP_DEADLINE_MS <= env.SHUTDOWN_TIMEOUT_MS, {
     message: 'CONSUMER_STOP_DEADLINE_MS must not exceed SHUTDOWN_TIMEOUT_MS',
     path: ['CONSUMER_STOP_DEADLINE_MS'],
+  })
+  .refine((env) => env.ENRICHMENT_RUN_LEASE_SECONDS * 1000 > worstProviderAttemptMs(env), {
+    message:
+      'ENRICHMENT_RUN_LEASE_SECONDS must be greater than the worst-case provider attempt time ' +
+      '(ENRICHMENT_PROVIDER_TIMEOUT_MS times ENRICHMENT_PROVIDER_MAX_TRIES, plus the retry backoff)',
+    path: ['ENRICHMENT_RUN_LEASE_SECONDS'],
   })
   .superRefine(requireSentryDsn)
   .superRefine((env, context) => {

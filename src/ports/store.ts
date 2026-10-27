@@ -30,8 +30,9 @@ export type NewRun = {
 }
 
 /**
- * The fencing token of a run lease: it changes at every claim and every renewal, and every write
- * by the leaseholder is checked against it, so a worker whose lease passed to another is refused.
+ * The fencing token of a run lease: a fresh random value at every claim (a renewal keeps it and
+ * only moves the heartbeat), and every write by the leaseholder is checked against it, so a worker
+ * whose lease passed to another is refused.
  */
 export type Lease = string
 
@@ -43,8 +44,11 @@ export class LeaseLostError extends Error {
   }
 }
 
-/** Budget held for one provider call; it names the month it was taken from, whatever the date is later. */
-export type Reservation = { month: string; priceMicros: number }
+/**
+ * Budget held for one provider call; it names the month it was taken from, whatever the date is
+ * later, and the key of the stored hold that settles or releases it.
+ */
+export type Reservation = { month: string; priceMicros: number; holdKey: string }
 
 /** What a reservation asks for. */
 export type ReserveRequest = {
@@ -116,7 +120,8 @@ export type EnrichmentStore = {
     leaseSeconds: number
   ) => Promise<Claim>
   /**
-   * Renews the lease of a run the worker still holds and returns the new token. Throws
+   * Renews the lease of a run the worker still holds (it moves the heartbeat, not the token or the
+   * start time) and returns the token. Throws
    * {@link LeaseLostError} when another worker has taken the run.
    */
   renewLease: (
