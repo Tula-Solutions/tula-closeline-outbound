@@ -183,6 +183,20 @@ carries `List-Unsubscribe` (one-click) and a signed link from `MAIL_UNSUBSCRIBE_
 (`unsubscribe.ts`, 30 days); the route behind it is not built. `GET /v1/mail/capacity` shows
 remaining sends and the next send time per Mailbox (`capacity.ts`). No internal `submitSend` HTTP
 route yet (no inbound shared-secret auth).
+## Sequence engine (`src/modules/engine`)
+
+`sweep` (timer in `server.ts`, `ENGINE_SWEEP_INTERVAL_MS`, 0 = off) asks `dueOrganizations` which
+Organizations have due Enrollments, `claimDue`s a page of each (`FOR UPDATE SKIP LOCKED`, due time moves
+to the end of the lease) and queues one `enrollment.step` message each. `runStep` then re-checks the
+Enrollment is still at that Step and attempt epoch, and acts: email goes through the window check, the
+Contact Check, the Draft source and `send()` (key = Enrollment, Step index, epoch); wait, branch
+(`no_response` + default only), rep_task and end move the Enrollment with a conditional `advance`.
+A Draft that is ungrounded, fails a check or is in a `review` Campaign goes to approvals and the
+Enrollment waits 24 h. `stopForProspect` stops a Prospect's Enrollments (reply, bounce, unsubscribe) and
+must be called by those tickets. The Draft source, approvals and Prospect contacts are in-memory
+stand-ins (shortcuts) until M06-T7, M09 and core serve them. Env: `ENGINE_SWEEP_INTERVAL_MS`,
+`ENGINE_ORG_BATCH`, `ENGINE_STEP_PAGE`, `ENGINE_LEASE_SECONDS`.
+
 ## Enrichment providers and settings (`src/adapters/providers`, `src/modules/enrichment/settings*.ts`)
 
 Apollo (person, company) and ZeroBounce (email verifier) are the two adapters. Each takes an
@@ -208,6 +222,9 @@ secret box needs `MAIL_SECRET_BOX_KEY`-style configuration; unconfigured, settin
 the queue publish in batches of ten. The waterfall itself runs from the queue, off the request path.
 `LinkedinStore.reserve` (`bench/linkedin-quota.bench.test.ts`): O(1) per send, one send-key lookup
 and two counters under a per-account advisory lock (Postgres), never the Organization's size.
+`branchTarget` (`bench/engine.bench.test.ts`): O(arms) per Step, no I/O. A sweep tick is O(due rows in a
+page) per Organization, bounded to 10 Organization pages: `claimDue` reads `enrollments_due_idx` in due
+order with a limit. The 10,000-of-1,000,000 case is not measured here (the memory store scans).
 The per-request middleware stack (`createBaseApp`) and `/healthz` keep the budgets in `bench/`.
 
 A benchmark times `measure(operation)`: a warm-up, then several batches, gated on the fastest, so a

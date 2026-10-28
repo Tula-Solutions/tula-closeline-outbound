@@ -26,6 +26,11 @@ import { createGraphMailTransport } from '~/adapters/graph/mail-transport'
 import { createHttpCoreProspects } from '~/adapters/http/core'
 import { createMemoryAudienceCheckStore } from '~/adapters/memory/audience-check-store'
 import { createMemoryCore } from '~/adapters/memory/core'
+import {
+  createMemoryApprovals,
+  createMemoryDraftSource,
+  createMemoryProspectContacts,
+} from '~/adapters/memory/engine'
 import { createMemoryLinkedInProvider } from '~/adapters/memory/linkedin-provider'
 import { createMemoryMailTransport } from '~/adapters/memory/mail-transport'
 import { createMemorySecretBox } from '~/adapters/memory/secret-box'
@@ -50,6 +55,8 @@ import { type OutboundEnvelope, registry } from '~/messages'
 import type { BrandVoiceDeps } from '~/modules/brand-voice/deps'
 import { campaignHandlers } from '~/modules/campaign/audience'
 import type { CampaignDeps } from '~/modules/campaign/deps'
+import type { EngineDeps } from '~/modules/engine/deps'
+import { engineHandlers } from '~/modules/engine/service'
 import type { EnrichmentDeps } from '~/modules/enrichment/deps'
 import { enrichmentHandlers } from '~/modules/enrichment/handlers'
 import type { FitDeps } from '~/modules/fit/deps'
@@ -108,6 +115,8 @@ export type Container = {
   send: SendDeps
   /** Everything the LinkedIn module needs; its service functions take this first. */
   linkedin: LinkedinDeps
+  /** Everything the Sequence engine needs; `server.ts` runs its sweep on a timer. */
+  engine: EngineDeps
   /** The queue consumer; built here, started by `server.ts` and stopped on shutdown. */
   consumer: Consumer
   /** Probes run by `/readyz`: the database. */
@@ -271,7 +280,7 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     store: createPostgresCampaignStore(inOrganization),
     access: core.access,
     clock: systemClock,
-    enrollments: createPostgresEnrollmentStore(inOrganization),
+    enrollments: createPostgresEnrollmentStore(inOrganization, database.db),
     checks: createMemoryAudienceCheckStore(),
     audience: core.audience,
     guard: guardHttp ?? createMemoryContactGuard(),
@@ -384,12 +393,37 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     unsubscribe: { secret: env.MAIL_STATE_SECRET, url: env.MAIL_UNSUBSCRIBE_URL },
     organizationDailyCap: env.MAIL_ORG_DAILY_CAP,
   }
+  if (env.ENVIRONMENT !== 'local') {
+    logger.warn('the Sequence engine uses in-memory drafts, approvals and contacts', {})
+  }
+  // shortcut: drafts (M06-T7), approvals (M09) and Prospect contacts are in-memory stand-ins; the
+  // placeholder Draft is ungrounded, so nothing is sent unseen until the real ones replace them.
+  const engine: EngineDeps = {
+    enrollments: campaigns.enrollments,
+    campaigns: campaigns.store,
+    send,
+    drafts: createMemoryDraftSource(() => new Date().toISOString()),
+    approvals: createMemoryApprovals(),
+    contacts: createMemoryProspectContacts(),
+    queue,
+    clock: systemClock,
+    logger,
+    limits: {
+      orgBatch: env.ENGINE_ORG_BATCH,
+      stepPage: env.ENGINE_STEP_PAGE,
+      leaseSeconds: env.ENGINE_LEASE_SECONDS,
+    },
+  }
   const consumer = createOutboundConsumer({
     queue,
     store: processed,
     logger,
     errorReporter: errors,
-    handlers: { ...enrichmentHandlers(enrichment), ...campaignHandlers(campaigns) },
+    handlers: {
+      ...enrichmentHandlers(enrichment),
+      ...campaignHandlers(campaigns),
+      ...engineHandlers(engine),
+    },
     concurrency: env.CONSUMER_CONCURRENCY,
   })
 
@@ -414,6 +448,7 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     fit,
     send,
     linkedin,
+    engine,
     consumer,
     readinessChecks: [
       {

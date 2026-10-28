@@ -139,6 +139,14 @@ const schema = z
     QUEUE_ENDPOINT: z.url().max(2_048).optional(),
     /** Messages the queue consumer handles at once. */
     CONSUMER_CONCURRENCY: integer(1, 100).default(4),
+    /** How often the Sequence engine looks for due Steps, in ms; 0 turns the sweep off. */
+    ENGINE_SWEEP_INTERVAL_MS: integer(0, 3_600_000).default(30_000),
+    /** Organizations one engine sweep page looks at. */
+    ENGINE_ORG_BATCH: integer(1, 500).default(50),
+    /** Due Enrollments one Organization yields per sweep. */
+    ENGINE_STEP_PAGE: integer(1, 1_000).default(100),
+    /** How long a claimed Enrollment stays out of other sweeps, in seconds. */
+    ENGINE_LEASE_SECONDS: integer(30, 86_400).default(600),
     /** The longest the consumer waits for messages in flight when it stops, in ms. */
     CONSUMER_STOP_DEADLINE_MS: integer(1, 120_000).default(5_000),
 

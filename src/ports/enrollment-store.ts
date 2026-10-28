@@ -25,6 +25,17 @@ export type ActivityPosition = { occurredAt: string; id: EnrollmentEvent['id'] }
 /** One page of a newest-first list; `next` is set when more follow. */
 export type Paged<Item, Position> = { items: Item[]; next: Position | null }
 
+/** Where an Enrollment goes next: another (or the same) Step at a time, or to the end. */
+export type Transition =
+  | {
+      state: 'active'
+      currentStepKey: string
+      currentStep: number
+      attemptEpoch: number
+      nextDueAt: string
+    }
+  | { state: 'completed'; at: string }
+
 /** The store of Enrollments and their logs; every call is scoped to one Organization. */
 export type EnrollmentStore = {
   /**
@@ -76,4 +87,46 @@ export type EnrollmentStore = {
     campaignId: CampaignId,
     prospectIds: readonly ProspectId[]
   ) => Promise<Set<ProspectId>>
+  /**
+   * Organizations that have an active Enrollment due, in id order after `after`, at most `batch`;
+   * `next` resumes the walk and is null when none were visited. Runs outside any Organization's scope.
+   */
+  dueOrganizations: (
+    after: string | null,
+    batch: number,
+    now: string
+  ) => Promise<{ organizationIds: OrganizationId[]; next: string | null }>
+  /**
+   * Takes up to `limit` active Enrollments due at `now`, oldest due first, skipping rows another
+   * sweep holds, and moves their due time to `leaseUntil` so no other sweep takes them until then.
+   */
+  claimDue: (
+    organizationId: OrganizationId,
+    now: string,
+    leaseUntil: string,
+    limit: number
+  ) => Promise<Enrollment[]>
+  /**
+   * Moves an active Enrollment that is still at `expect` (Step and attempt) to `to` and appends
+   * `events`, holding the row. Null when it has ended or moved on, so a repeat writes nothing.
+   */
+  advance: (
+    organizationId: OrganizationId,
+    id: EnrollmentId,
+    expect: { stepKey: string; attemptEpoch: number },
+    to: Transition,
+    events: readonly EnrollmentEvent[]
+  ) => Promise<Enrollment | null>
+  /** At most `limit` active Enrollments of a Prospect, across Campaigns. */
+  activeOfProspect: (
+    organizationId: OrganizationId,
+    prospectId: ProspectId,
+    limit: number
+  ) => Promise<Enrollment[]>
+  /** When the latest log entry of this kind was written, or null. */
+  lastEventAt: (
+    organizationId: OrganizationId,
+    id: EnrollmentId,
+    kind: EnrollmentEvent['kind']
+  ) => Promise<string | null>
 }
