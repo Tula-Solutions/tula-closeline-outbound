@@ -3,7 +3,7 @@ import { formatId, type ProspectId, type ResearchBrief } from 'tula-closeline-co
 import { createDb, withOrganization } from 'tula-closeline-db'
 import { createMemoryBriefStore } from '~/adapters/memory/brief-store'
 import { integrationUrls } from '~/integration-support'
-import type { BriefStore } from '~/ports/brief-store'
+import type { BriefOutcome, BriefStore } from '~/ports/brief-store'
 import { newOrganizationId } from '~/testing'
 import { createPostgresBriefStore } from './brief-store'
 
@@ -59,6 +59,13 @@ function brief(prospectId: ProspectId, at: Date, overrides: Partial<ResearchBrie
   } satisfies ResearchBrief
 }
 
+const kept = <T>(outcome: T | 'reused'): T => {
+  if (outcome === 'reused') {
+    throw new Error('the key was reused')
+  }
+  return outcome
+}
+
 const stores: [string, BriefStore][] = [
   ['memory', createMemoryBriefStore()],
   [
@@ -88,10 +95,19 @@ describe.each(stores)('brief store (%s)', (_name, store) => {
     const k = key()
     const first = brief(prospect, new Date())
     const second = brief(prospect, new Date())
-    const [a, b] = await Promise.all([store.insert(org, first, k), store.insert(org, second, k)])
+    const [a, b] = (
+      await Promise.all([store.insert(org, first, k), store.insert(org, second, k)])
+    ).map(kept) as [BriefOutcome, BriefOutcome]
     expect(a.brief.id).toBe(b.brief.id)
     expect([a.created, b.created].sort()).toEqual([false, true])
     expect(await store.get(org, a.brief.id === first.id ? second.id : first.id)).toBeNull()
+  })
+
+  test('a key taken by another Prospect is reused, not answered with that Prospect Brief', async () => {
+    const org = newOrganizationId()
+    const k = key()
+    await store.insert(org, brief(formatId('prs', hex()), new Date()), k)
+    expect(await store.insert(org, brief(formatId('prs', hex()), new Date()), k)).toBe('reused')
   })
 
   test('a key and a Brief belong to their Organization', async () => {
@@ -104,7 +120,7 @@ describe.each(stores)('brief store (%s)', (_name, store) => {
     expect(await store.get(other, made.id)).toBeNull()
     expect(await store.byRequestKey(other, k)).toBeNull()
     expect(await store.newest(other, prospect)).toBeNull()
-    expect((await store.insert(other, brief(prospect, new Date()), k)).created).toBe(true)
+    expect(kept(await store.insert(other, brief(prospect, new Date()), k)).created).toBe(true)
   })
 
   test('pages a Prospect newest first', async () => {

@@ -23,7 +23,7 @@ export function createMemoryBriefStore(): BriefStore {
     async insert(organizationId, brief, requestKey) {
       const winner = keyed.get(`${organizationId}:${requestKey}`)
       if (winner !== undefined) {
-        return { brief: winner, created: false }
+        return winner.prospectId === brief.prospectId ? { brief: winner, created: false } : 'reused'
       }
       keyed.set(`${organizationId}:${requestKey}`, brief)
       byOrganization.set(organizationId, [...of(organizationId), brief])

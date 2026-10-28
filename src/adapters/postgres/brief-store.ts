@@ -202,7 +202,9 @@ export function createPostgresBriefStore(inOrganization: InOrganization): BriefS
           if (winner === null) {
             throw new Error('a Brief key conflict left no Brief to read')
           }
-          return { brief: winner, created: false }
+          return winner.prospectId === brief.prospectId
+            ? { brief: winner, created: false }
+            : 'reused'
         }
         const entries: {
           role: 'statement' | 'angle_source'

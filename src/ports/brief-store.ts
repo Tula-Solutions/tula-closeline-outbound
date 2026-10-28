@@ -11,13 +11,13 @@ export type BriefStore = {
   byRequestKey: (organizationId: OrganizationId, key: string) => Promise<ResearchBrief | null>
   /**
    * Adds a Brief under its Idempotency-Key. Two requests racing on one key cannot both win: the loser
-   * gets the winner's Brief with `created` false and its own is dropped.
+   * gets the winner's Brief with `created` false and its own is dropped; `reused` when the winner is a Brief of another Prospect.
    */
   insert: (
     organizationId: OrganizationId,
     brief: ResearchBrief,
     requestKey: string
-  ) => Promise<BriefOutcome>
+  ) => Promise<BriefOutcome | 'reused'>
   /** One Brief, or null. */
   get: (organizationId: OrganizationId, briefId: BriefId) => Promise<ResearchBrief | null>
   /** A newest-first page of a Prospect's Briefs strictly after `after` in that order (from the start when null). */

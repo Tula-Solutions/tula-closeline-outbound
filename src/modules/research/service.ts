@@ -330,12 +330,15 @@ async function buildBrief(
     expiresAt: new Date(now.getTime() + deps.limits.briefTtlMs).toISOString(),
   })
   const outcome = await deps.store.insert(organizationId, brief, options.idempotencyKey)
+  if (outcome === 'reused') {
+    throw domainError(ERRORS['request.idempotency_key_reused'])
+  }
   // Ids and counts only: never a Prospect field or brief text.
   deps.logger.info('research.brief_built', {
     organizationId,
     prospectId,
     briefId: outcome.brief.id,
-    statements: outcome.brief.statements.length,
+    statements: statements.length,
     dropped,
   })
   return outcome
