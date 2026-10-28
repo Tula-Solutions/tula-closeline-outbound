@@ -47,7 +47,7 @@ export type SequenceBody = { expectedVersion: number; steps: Step[] }
 /** A Campaign and whether this call wrote it (a replay answers the stored one). */
 export type Written = { campaign: Campaign; created: boolean }
 
-function errorOf(code: keyof typeof CAMPAIGN_ERRORS): ErrorDefinition {
+export function errorOf(code: keyof typeof CAMPAIGN_ERRORS): ErrorDefinition {
   return CAMPAIGN_ERRORS[code]
 }
 
@@ -66,7 +66,7 @@ function derivedId(name: string): CampaignId {
 }
 
 /** The Campaigns the caller may see: every owner's, or only these Memberships'. */
-type View = { me: MembershipId; owners: readonly MembershipId[] | undefined }
+export type View = { me: MembershipId; owners: readonly MembershipId[] | undefined }
 
 async function viewOf(deps: CampaignDeps, caller: CampaignCaller): Promise<View> {
   const me = await deps.access.membershipIdOf(caller.organizationId, caller.userId)
@@ -88,7 +88,7 @@ function sees(view: View, campaign: Campaign): boolean {
 }
 
 /** The Campaign if the caller may see it; otherwise `campaign.not_found`, never a refusal. */
-async function loadVisible(
+export async function loadVisible(
   deps: CampaignDeps,
   caller: CampaignCaller,
   id: CampaignId

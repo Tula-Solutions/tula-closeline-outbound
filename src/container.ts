@@ -4,6 +4,7 @@ import { createDb, type Transaction, withOrganization } from 'tula-closeline-db'
 import {
   type Clock,
   createErrorReporter,
+  createHttpContactGuard,
   createLogger,
   createMemoryProcessedStore,
   createRemoteKeySet,
@@ -17,17 +18,19 @@ import {
   type TokenVerifier,
 } from 'tula-closeline-kit'
 import { type Consumer, createSqsQueue } from 'tula-closeline-kit/queue'
-import { createMemoryQueue } from 'tula-closeline-kit/testing'
+import { createMemoryContactGuard, createMemoryQueue } from 'tula-closeline-kit/testing'
 import { createLocalKeySecretBox, createUnconfiguredSecretBox } from '~/adapters/crypto/secret-box'
 import { createGmailMailTransport } from '~/adapters/gmail/mail-transport'
 import { createGraphMailTransport } from '~/adapters/graph/mail-transport'
 import { createHttpCoreProspects } from '~/adapters/http/core'
+import { createMemoryAudienceCheckStore } from '~/adapters/memory/audience-check-store'
 import { createMemoryCore } from '~/adapters/memory/core'
 import { createMemoryLinkedInProvider } from '~/adapters/memory/linkedin-provider'
 import { createMemoryMailTransport } from '~/adapters/memory/mail-transport'
 import { createMemorySecretBox } from '~/adapters/memory/secret-box'
 import { createPostgresBrandVoiceStore } from '~/adapters/postgres/brand-voice-store'
 import { createPostgresCampaignStore } from '~/adapters/postgres/campaign-store'
+import { createPostgresEnrollmentStore } from '~/adapters/postgres/enrollment-store'
 import { createPostgresLinkedinStore } from '~/adapters/postgres/linkedin-store'
 import { createPostgresMailboxStore } from '~/adapters/postgres/mailbox-store'
 import { createPostgresProviderConfig } from '~/adapters/postgres/provider-config'
@@ -38,6 +41,7 @@ import { type Env, loadEnv } from '~/env'
 import { SERVICE } from '~/info'
 import { type OutboundEnvelope, registry } from '~/messages'
 import type { BrandVoiceDeps } from '~/modules/brand-voice/deps'
+import { campaignHandlers } from '~/modules/campaign/audience'
 import type { CampaignDeps } from '~/modules/campaign/deps'
 import type { EnrichmentDeps } from '~/modules/enrichment/deps'
 import { enrichmentHandlers } from '~/modules/enrichment/handlers'
@@ -184,6 +188,8 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
         'membership id and Team lookup',
         'enrichment providers',
         'email verifiers',
+        'audience listing from core',
+        'audience check results',
       ],
     })
   }
@@ -202,6 +208,17 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
           timeoutMs: env.CORE_CALL_TIMEOUT_MS,
           maxAttempts: env.CORE_CALL_MAX_TRIES,
           retryBaseMs: env.ENRICHMENT_RETRY_BASE_MS,
+          logger,
+        })
+      : undefined
+  // Fails closed: the memory guard denies every Prospect, so local without core sends nothing.
+  const guardHttp =
+    env.ENVIRONMENT !== 'local' || env.CORE_URL !== undefined
+      ? createHttpContactGuard({
+          baseUrl: env.CORE_URL as string,
+          secret: env.CORE_INTERNAL_SECRET as string,
+          environment: env.ENVIRONMENT,
+          caller: 'outbound',
           logger,
         })
       : undefined
@@ -230,6 +247,12 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     store: createPostgresCampaignStore(inOrganization),
     access: core.access,
     clock: systemClock,
+    enrollments: createPostgresEnrollmentStore(inOrganization),
+    checks: createMemoryAudienceCheckStore(),
+    audience: core.audience,
+    guard: guardHttp ?? createMemoryContactGuard(),
+    queue,
+    logger,
   }
   const brandVoice: BrandVoiceDeps = {
     store: createPostgresBrandVoiceStore(inOrganization),
@@ -308,7 +331,7 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     store: processed,
     logger,
     errorReporter: errors,
-    handlers: enrichmentHandlers(enrichment),
+    handlers: { ...enrichmentHandlers(enrichment), ...campaignHandlers(campaigns) },
     concurrency: env.CONSUMER_CONCURRENCY,
   })
 
@@ -346,6 +369,7 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     },
     close: async () => {
       coreHttp?.close()
+      guardHttp?.close()
       await errors.close(REPORTER_CLOSE_MS)
       await database.close()
     },
