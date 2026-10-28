@@ -20,6 +20,7 @@ import type { ProspectValues } from '~/ports/enrichment-provider'
 
 type Stored = {
   ownerId: UserId
+  updatedAt: string
   values: ProspectValues
   /** Fields whose value an import or a person set: enrichment never replaces these. */
   owned: Set<EnrichedFieldName>
@@ -27,6 +28,10 @@ type Stored = {
   suggestions: Map<EnrichedFieldName, { value: string; source: string }>
   replays: Map<string, { field: EnrichedFieldName; application: FieldApplication }[]>
 }
+
+/** A later update time than `previous`, even within the same millisecond. */
+const touched = (previous: string) =>
+  new Date(Math.max(Date.now(), new Date(previous).getTime() + 1)).toISOString()
 
 /** The Membership id this fake core gives a user: the same hex under the `mem` prefix. */
 export function membershipOf(userId: UserId): MembershipId {
@@ -38,6 +43,8 @@ export type SeedProspect = {
   id: ProspectId
   ownerId: UserId
   values?: ProspectValues
+  /** When the Prospect last changed; the seeding time when omitted. */
+  updatedAt?: string
   /** Fields set by an import or a person, as opposed to empty ones. */
   owned?: readonly EnrichedFieldName[]
 }
@@ -91,6 +98,7 @@ export function createMemoryCore(): MemoryCore {
     seed(organizationId, prospect) {
       prospects.set(key(organizationId, prospect.id), {
         ownerId: prospect.ownerId,
+        updatedAt: prospect.updatedAt ?? new Date().toISOString(),
         values: { ...prospect.values },
         owned: new Set(prospect.owned ?? []),
         sources: new Map(),
@@ -107,6 +115,7 @@ export function createMemoryCore(): MemoryCore {
         throw new Error('prospect not found')
       }
       found.values[field] = value
+      found.updatedAt = touched(found.updatedAt)
       found.owned.add(field)
       found.sources.set(field, 'import')
     },
@@ -124,7 +133,9 @@ export function createMemoryCore(): MemoryCore {
     prospects: {
       async getEnrichmentInput(organizationId, prospectId): Promise<EnrichmentInput | null> {
         const found = find(organizationId, prospectId)
-        return found === undefined ? null : { prospectId, values: { ...found.values } }
+        return found === undefined
+          ? null
+          : { prospectId, values: { ...found.values }, updatedAt: found.updatedAt }
       },
       async findProspectIdByEmail(organizationId, email) {
         for (const [entry, found] of prospects) {
@@ -154,6 +165,7 @@ export function createMemoryCore(): MemoryCore {
             return { field: entry.field, application: 'suggested' as const }
           }
           found.values[entry.field] = entry.value
+          found.updatedAt = touched(found.updatedAt)
           found.sources.set(entry.field, source)
           return { field: entry.field, application: 'written' as const }
         })

@@ -54,7 +54,9 @@ outside `local`; the adapter is `src/adapters/http/core.ts`), `CORE_CALL_TIMEOUT
 `MAIL_OAUTH_REDIRECT_URI`, `MAIL_STATE_SECRET` (required outside `local`), `MAIL_SECRET_BOX_KEY`
 (a local-only key, refused in staging and prod), `MAIL_CALL_TIMEOUT_MS`, `MAIL_CALL_MAX_TRIES`,
 `MAIL_RETRY_BASE_MS`, and for enrichment vendors `APOLLO_BASE_URL`, `ZEROBOUNCE_BASE_URL`,
-`PROVIDER_CIRCUIT_FAILURES`, `PROVIDER_CIRCUIT_OPEN_MS`. Add a key in both files.
+`PROVIDER_CIRCUIT_FAILURES`, `PROVIDER_CIRCUIT_OPEN_MS`, and for Research Briefs
+`RESEARCH_WEB_DEADLINE_MS`, `RESEARCH_MODEL_TIMEOUT_MS` (a floor: the deadline is raised to hold the `AI_CALL_*` tries and backoff),
+`RESEARCH_BRIEF_TTL_SECONDS`. Add a key in both files.
 
 ## Campaigns (`src/modules/campaign`)
 
@@ -143,6 +145,26 @@ Draft names the exact version it used. The body is checked by the service, not t
 empty or oversized value, an unknown field or a banned phrase that is also preferred answers
 `voice.invalid`. A repeat of the last save answers that version. The contract and database have no
 default-language field, so there is none yet.
+
+## Research Briefs (`src/modules/research`)
+
+`POST /v1/prospects/{prospectId}/briefs` builds a Brief from the Prospect's fields, fresh Signals, a
+bounded web search (at most 10 pages, `RESEARCH_WEB_DEADLINE_MS`) and the Organization's Playbook
+search. The model gets fixed instructions and the material as numbered sources (`s1`...) in a
+separate data channel; a statement whose `sourceId` is not one of them, or that fails the contract's
+schema, is dropped and counted in `droppedCount`. A web timeout answers `research.timeout` with
+`details.sources` (the pages that had arrived, marked `partial`) and keeps nothing. A Brief is reused
+(200) while the Prospect's `updatedAt` is the one it was built from and it has not expired (core's
+enrichment-input route serves no `updatedAt` yet, so over HTTP every call builds); `refresh: true`
+builds a new one (201). The `Idempotency-Key` is stored on the Brief (`request_key`, unique per
+Organization): a replay answers that Brief (200), the key for another Prospect is
+`request.idempotency_key_reused`, and of two racing requests one insert wins and the other answers
+its Brief. `BriefStore` is Postgres (`outbound.briefs`, `outbound.brief_statements`) with a memory
+twin for tests; `Model` and `WebSearch` are the container's `ai` pair (Anthropic and Exa when `ANTHROPIC_API_KEY` /
+`EXA_API_KEY` are set, memory stand-ins in `local` otherwise; the model gets the Organization so its
+monthly budget applies, and a spent budget is `draft.budget_exceeded`, never retried). `PlaybookSearch`
+has a memory adapter only. With no model outside `local` a Brief answers `draft.model_unavailable`.
+Logs carry ids and counts only.
 
 ## Signals and fit (`src/modules/signal`, `src/modules/fit`)
 
