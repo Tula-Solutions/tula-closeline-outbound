@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { formatId, type ProspectId } from 'tula-closeline-contract'
+import { encodeCursor, formatId, type ProspectId } from 'tula-closeline-contract'
 import { createApolloProvider } from '~/adapters/providers/apollo'
 import { createCircuit } from '~/adapters/providers/circuit'
 import { createZeroBounceVerifier } from '~/adapters/providers/zerobounce'
@@ -325,6 +325,10 @@ describe('budget and spend', () => {
     const other = await call(w.t, 'GET', '/v1/enrichment/spend?month=1999-01', owner)
     expect(other.body.items).toEqual([])
     expect(codeOf(await call(w.t, 'GET', '/v1/enrichment/spend?cursor=nope', owner))).toBe(
+      'request.invalid'
+    )
+    const forged = encodeCursor({ month: 'zzz', provider: 'a' })
+    expect(codeOf(await call(w.t, 'GET', `/v1/enrichment/spend?cursor=${forged}`, owner))).toBe(
       'request.invalid'
     )
   })

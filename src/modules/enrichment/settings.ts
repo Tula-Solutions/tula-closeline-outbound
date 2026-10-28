@@ -165,7 +165,10 @@ export async function setWaterfall(
   return getWaterfall(deps, caller)
 }
 
-const spendCursorSchema = z.object({ month: z.string().max(10), provider: z.string().max(64) })
+const spendCursorSchema = z.object({
+  month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])-01$/),
+  provider: z.string().max(64),
+})
 
 /** This month's budget: the limits from configuration, what is spent and held, and when it resets (UTC). */
 export async function getBudget(
