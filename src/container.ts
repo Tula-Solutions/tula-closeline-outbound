@@ -32,6 +32,7 @@ import { createPostgresCampaignStore } from '~/adapters/postgres/campaign-store'
 import { createPostgresEnrollmentStore } from '~/adapters/postgres/enrollment-store'
 import { createPostgresMailboxStore } from '~/adapters/postgres/mailbox-store'
 import { createPostgresProviderConfig } from '~/adapters/postgres/provider-config'
+import { createPostgresSendStore } from '~/adapters/postgres/send-store'
 import { createPostgresEnrichmentStore } from '~/adapters/postgres/store'
 import { createOutboundConsumer } from '~/consumer'
 import { describeError } from '~/describe-error'
@@ -44,6 +45,7 @@ import type { CampaignDeps } from '~/modules/campaign/deps'
 import type { EnrichmentDeps } from '~/modules/enrichment/deps'
 import { enrichmentHandlers } from '~/modules/enrichment/handlers'
 import type { MailboxDeps } from '~/modules/mailbox/deps'
+import type { SendDeps } from '~/modules/send/deps'
 import type { CredentialVault } from '~/ports/provider-config'
 import { trackerSafe } from '~/tracker-safe'
 
@@ -88,6 +90,8 @@ export type Container = {
   brandVoice: BrandVoiceDeps
   /** Everything the mailbox module needs; its service functions take this first. */
   mailboxes: MailboxDeps
+  /** Everything the send pipeline needs. */
+  send: SendDeps
   /** The queue consumer; built here, started by `server.ts` and stopped on shutdown. */
   consumer: Consumer
   /** Probes run by `/readyz`: the database. */
@@ -313,6 +317,16 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     },
     logger,
   }
+  const send: SendDeps = {
+    store: createPostgresSendStore(inOrganization),
+    mailboxes,
+    campaigns: campaigns.store,
+    guard: campaigns.guard,
+    clock: systemClock,
+    logger,
+    unsubscribe: { secret: env.MAIL_STATE_SECRET, url: env.MAIL_UNSUBSCRIBE_URL },
+    organizationDailyCap: env.MAIL_ORG_DAILY_CAP,
+  }
   const consumer = createOutboundConsumer({
     queue,
     store: processed,
@@ -339,6 +353,7 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     campaigns,
     brandVoice,
     mailboxes,
+    send,
     consumer,
     readinessChecks: [
       {

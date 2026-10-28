@@ -10,6 +10,7 @@ import { createCampaignRouter } from '~/modules/campaign/router'
 import { createEnrichmentRouter } from '~/modules/enrichment/router'
 import { createHealthRouter } from '~/modules/health/router'
 import { createMailboxRouter } from '~/modules/mailbox/router'
+import { createSendRouter } from '~/modules/send/router'
 import { serveOpenApi } from '~/openapi'
 
 /**
@@ -29,6 +30,7 @@ export function createApp(container: Container): OpenAPIHono<AppEnv> {
   publicRoutes.route('/', createCampaignRouter(container.campaigns))
   publicRoutes.route('/', createBrandVoiceRouter(container.brandVoice))
   publicRoutes.route('/', createMailboxRouter(container.mailboxes))
+  publicRoutes.route('/', createSendRouter(container.send))
   app.route('/', publicRoutes)
 
   serveOpenApi(app)

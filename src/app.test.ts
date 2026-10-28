@@ -37,6 +37,7 @@ test('the app serves its OpenAPI document describing every route and the error b
     '/v1/enrichment-runs/{runId}',
     '/v1/enrollments/{enrollmentId}',
     '/v1/enrollments/{enrollmentId}/activity',
+    '/v1/mail/capacity',
     '/v1/mailboxes',
     '/v1/mailboxes/connect',
     '/v1/mailboxes/connect/complete',

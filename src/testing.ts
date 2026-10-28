@@ -36,6 +36,7 @@ import { createMemoryMailboxStore } from '~/adapters/memory/mailbox-store'
 import { createMemoryProviderConfig } from '~/adapters/memory/provider-config'
 import type { MemoryProvider, MemoryVerifier } from '~/adapters/memory/providers'
 import { createMemorySecretBox } from '~/adapters/memory/secret-box'
+import { createMemorySendStore } from '~/adapters/memory/send-store'
 import { createMemoryEnrichmentStore } from '~/adapters/memory/store'
 import { createApp } from '~/app'
 import { createOutboundConsumer } from '~/consumer'
@@ -198,6 +199,17 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     logger,
   }
 
+  const send: Container['send'] = {
+    store: createMemorySendStore(() => time.clock.now().toISOString()),
+    mailboxes,
+    campaigns: campaigns.store,
+    guard,
+    clock: time.clock,
+    logger,
+    unsubscribe: { secret: env.MAIL_STATE_SECRET, url: env.MAIL_UNSUBSCRIBE_URL },
+    organizationDailyCap: env.MAIL_ORG_DAILY_CAP,
+  }
+
   return {
     env,
     logger,
@@ -213,6 +225,7 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     campaigns,
     brandVoice,
     mailboxes,
+    send,
     mail,
     outlookMail,
     mailEvents,

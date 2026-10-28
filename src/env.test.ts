@@ -38,6 +38,8 @@ test('configuration falls back to defaults for everything but the environment', 
     MAIL_CALL_TIMEOUT_MS: 10_000,
     MAIL_CALL_MAX_TRIES: 3,
     MAIL_RETRY_BASE_MS: 200,
+    MAIL_UNSUBSCRIBE_URL: 'http://127.0.0.1:3000/unsubscribe',
+    MAIL_ORG_DAILY_CAP: 500,
   })
 })
 
