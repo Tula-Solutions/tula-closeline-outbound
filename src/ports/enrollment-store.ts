@@ -139,13 +139,16 @@ export type EnrollmentStore = {
     kind: EnrollmentEvent['kind']
   ) => Promise<string | null>
   /**
-   * Per variant of an email Step: the sends, and how many of those Prospects then replied,
-   * bounced or unsubscribed (a stop is credited to the variant of the Prospect's latest send,
-   * and only when that send was this Step's). Only variants with a send appear.
+   * Per variant of an email Step (of one Sequence version): the sends, and how many of those
+   * Prospects then replied, bounced or unsubscribed. The store keeps these as tallies updated with
+   * the events, so the read costs the number of variants, not the log. A stop is credited to the
+   * variant of the Prospect's latest send, which may be another Step's. Only variants with a send
+   * appear. The memory store keeps one tally per Campaign and ignores `version`.
    */
   variantCounts: (
     organizationId: OrganizationId,
     campaignId: CampaignId,
+    version: number,
     stepKey: string
   ) => Promise<VariantCount[]>
 }

@@ -255,9 +255,8 @@ async function variantOf(run: Run, group: VariantGroup, stepKey: string) {
 }
 
 /**
- * Looks at the Step's results so a clear winner is promoted (automatic mode only).
- * shortcut: checked on a sample of sends, not each, because the counts scan the Campaign's log;
- * a promotion can lag by a few dozen sends, and a read of the results also promotes.
+ * Looks at the Step's results so a clear winner is promoted (automatic mode only). Checked on a
+ * sample of sends, not each, to keep the extra reads down; a read of the results also promotes.
  */
 async function settleTest(run: Run, group: VariantGroup, stepKey: string) {
   const { deps, organizationId, campaign } = run
@@ -399,7 +398,7 @@ async function runEmail(run: Run, step: Extract<Step, { kind: 'email' }>) {
         eventOf(enrollment.id, 'sent', at, {
           stepKey,
           sendId: decision.id,
-          variantKey: variant?.key ?? null,
+          variantKey: draft.variantKey,
         }),
       ])
       if (step.variants?.promotion.mode === 'auto' && deps.random() < AUTO_PROMOTE_SAMPLE) {

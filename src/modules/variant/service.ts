@@ -72,9 +72,8 @@ async function record(
 
 /**
  * The results of a Step's test. With automatic promotion on and no winner yet, a clear winner
- * (every variant at the sample, the leader ahead by the margin) is promoted here.
- * shortcut: the counts are an aggregate over the Campaign's log entries, so this is O(the
- * Campaign's events); keep it to reads and sampled sends, and move it to a counter when it is slow.
+ * (every variant at the sample, the leader ahead by the margin) is promoted here. The counts are
+ * per-variant tallies, so this costs the number of variants.
  */
 export async function measureStep(
   deps: VariantDeps,
@@ -89,7 +88,12 @@ export async function measureStep(
     campaign.sequenceVersion,
     stepKey
   )
-  const counts = await deps.enrollments.variantCounts(organizationId, campaign.id, stepKey)
+  const counts = await deps.enrollments.variantCounts(
+    organizationId,
+    campaign.id,
+    campaign.sequenceVersion,
+    stepKey
+  )
   const measured = measure(group, counts)
   if (promotion === null && group.promotion.mode === 'auto') {
     const winner = clearWinner(measured.variants, group.promotion.marginPercentagePoints)

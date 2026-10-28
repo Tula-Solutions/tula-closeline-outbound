@@ -11,6 +11,9 @@ import type {
 /** Why a Draft needs a person's approval before it goes. */
 export type ApprovalReason = (typeof APPROVAL_REASONS)[number]
 
+/** A Draft with the variant it was written for, which a later run keeps even if a winner is promoted. */
+export type VariantDraft = OutreachDraft & { variantKey: string | null }
+
 /** Where the engine gets the message of an email Step (draft generation lives in the drafting module). */
 export type DraftSource = {
   /** The Draft for this Prospect, Campaign and Step; the same one for a repeat of the same Step. */
@@ -24,7 +27,7 @@ export type DraftSource = {
       /** The variant of the Step's test this Prospect gets: write the message with its angle. */
       variant?: { key: string; angle: string }
     }
-  ) => Promise<OutreachDraft>
+  ) => Promise<VariantDraft>
 }
 
 /** Where a Draft that a Rep must look at goes before it may be sent (the approvals module). */

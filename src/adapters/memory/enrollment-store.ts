@@ -33,6 +33,57 @@ export function createMemoryEnrollmentStore(): EnrollmentStore {
     }
     return found
   }
+  const tallies = new Map<
+    string,
+    Map<string, VariantCount & { campaignId: string; stepKey: string }>
+  >()
+  const TALLY_OF_STOP = {
+    replied: 'replied',
+    hard_bounce: 'bounced',
+    unsubscribed: 'unsubscribed',
+  } as const
+  /** Keeps the variant tallies in step with the events just written (the Postgres store does it in SQL). */
+  const tally = (
+    organizationId: OrganizationId,
+    entry: Entry,
+    events: readonly EnrollmentEvent[]
+  ) => {
+    const add = (
+      stepKey: string,
+      variantKey: string,
+      column: keyof VariantCount & ('sent' | 'replied' | 'bounced' | 'unsubscribed')
+    ) => {
+      const byOrganization = tallies.get(organizationId) ?? new Map()
+      tallies.set(organizationId, byOrganization)
+      const key = `${entry.enrollment.campaignId}|${stepKey}|${variantKey}`
+      const row = byOrganization.get(key) ?? {
+        campaignId: entry.enrollment.campaignId,
+        stepKey,
+        variantKey,
+        sent: 0,
+        replied: 0,
+        bounced: 0,
+        unsubscribed: 0,
+      }
+      row[column] += 1
+      byOrganization.set(key, row)
+    }
+    for (const e of events) {
+      if (e.kind === 'sent' && e.variantKey !== null && e.stepKey !== null) {
+        add(e.stepKey, e.variantKey, 'sent')
+      }
+    }
+    for (const e of events) {
+      const column =
+        e.kind === 'stopped' && e.stopReason !== null
+          ? TALLY_OF_STOP[e.stopReason as keyof typeof TALLY_OF_STOP]
+          : undefined
+      const last = entry.events.filter((x) => x.kind === 'sent' && x.variantKey !== null).at(-1)
+      if (column !== undefined && last?.stepKey != null && last.variantKey !== null) {
+        add(last.stepKey, last.variantKey, column)
+      }
+    }
+  }
   const byProspect = (organizationId: OrganizationId, campaignId: CampaignId, id: ProspectId) =>
     [...entries(organizationId).values()].find(
       (e) => e.enrollment.campaignId === campaignId && e.enrollment.prospectId === id
@@ -43,10 +94,12 @@ export function createMemoryEnrollmentStore(): EnrollmentStore {
       if (existing !== undefined) {
         return { enrollment: structuredClone(existing.enrollment), created: false }
       }
-      entries(organizationId).set(enrollment.id, {
+      const entry = {
         enrollment: structuredClone(enrollment),
         events: structuredClone([...events]),
-      })
+      }
+      entries(organizationId).set(enrollment.id, entry)
+      tally(organizationId, entry, events)
       return { enrollment: structuredClone(enrollment), created: true }
     },
     async find(organizationId, id) {
@@ -123,7 +176,7 @@ export function createMemoryEnrollmentStore(): EnrollmentStore {
         currentStepKey: null,
         currentStep: null,
       }
-      found.events.push({
+      const stopped: EnrollmentEvent = {
         id: formatId('eev', Bun.randomUUIDv7()),
         enrollmentId: id as EnrollmentId,
         kind: 'stopped',
@@ -133,7 +186,9 @@ export function createMemoryEnrollmentStore(): EnrollmentStore {
         stopReason: reason,
         actorMembershipId: actor,
         occurredAt: at,
-      })
+      }
+      found.events.push(stopped)
+      tally(organizationId, found, [stopped])
       return { enrollment: structuredClone(found.enrollment), stopped: true }
     },
     async activeElsewhere(organizationId, campaignId, prospectIds) {
@@ -217,6 +272,7 @@ export function createMemoryEnrollmentStore(): EnrollmentStore {
               currentStep: null,
             }
       found.events.push(...structuredClone([...events]))
+      tally(organizationId, found, events)
       return structuredClone(found.enrollment)
     },
     async activeOfProspect(organizationId, prospectId, limit) {
@@ -234,41 +290,12 @@ export function createMemoryEnrollmentStore(): EnrollmentStore {
         .sort()
       return times[times.length - 1] ?? null
     },
-    async variantCounts(organizationId, campaignId, stepKey) {
-      const counts = new Map<string, VariantCount>()
-      const countOf = (variantKey: string) => {
-        let found = counts.get(variantKey)
-        if (found === undefined) {
-          found = { variantKey, sent: 0, replied: 0, bounced: 0, unsubscribed: 0 }
-          counts.set(variantKey, found)
-        }
-        return found
-      }
-      for (const { enrollment, events } of entries(organizationId).values()) {
-        if (enrollment.campaignId !== campaignId) {
-          continue
-        }
-        const sends = events.filter((e) => e.kind === 'sent' && e.variantKey !== null)
-        for (const send of sends.filter((e) => e.stepKey === stepKey)) {
-          countOf(send.variantKey as string).sent++
-        }
-        const last = sends.reduce<EnrollmentEvent | null>(
-          (latest, e) => (latest === null || e.occurredAt >= latest.occurredAt ? e : latest),
-          null
+    async variantCounts(organizationId, campaignId, _version, stepKey) {
+      return structuredClone(
+        [...(tallies.get(organizationId)?.values() ?? [])].filter(
+          (t) => t.campaignId === campaignId && t.stepKey === stepKey
         )
-        if (last === null || last.stepKey !== stepKey) {
-          continue
-        }
-        const row = countOf(last.variantKey as string)
-        if (enrollment.stopReason === 'replied') {
-          row.replied++
-        } else if (enrollment.stopReason === 'hard_bounce') {
-          row.bounced++
-        } else if (enrollment.stopReason === 'unsubscribed') {
-          row.unsubscribed++
-        }
-      }
-      return [...counts.values()]
+      ).map(({ campaignId: _c, stepKey: _s, ...count }) => count)
     },
   }
 }

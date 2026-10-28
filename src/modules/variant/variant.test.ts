@@ -206,7 +206,20 @@ async function world(promotion: Record<string, unknown> = { mode: 'manual' }) {
         actorMembershipId: null,
         occurredAt: at,
       }
-      await t.deps.engine.enrollments.insertIfAbsent(org, enrollment, [sent])
+      const stopped: EnrollmentEvent[] =
+        reason === null
+          ? []
+          : [
+              {
+                ...sent,
+                id: formatId('eev', crypto.randomUUID()) as EnrollmentEvent['id'],
+                kind: 'stopped',
+                stepKey: null,
+                variantKey: null,
+                stopReason: reason,
+              },
+            ]
+      await t.deps.engine.enrollments.insertIfAbsent(org, enrollment, [sent, ...stopped])
     }
   }
   return { t, org, owner, as, call, id, results, promote, seed }

@@ -160,6 +160,45 @@ describe('engine', () => {
     expect(log.items.find((e) => e.kind === 'sent')?.variantKey).toBe('b')
   })
 
+  test('a send retried after a promotion keeps the variant its Draft was written for', async () => {
+    const variants = [
+      { key: 'a', label: 'Story', angle: 'Lead with a story', weight: 50 },
+      { key: 'b', label: 'Number', angle: 'Lead with a number', weight: 50 },
+    ]
+    const steps = STEPS.map((s) =>
+      s.key === 'intro' && s.kind === 'email'
+        ? { ...s, variants: { variants, promotion: { mode: 'manual' as const } } }
+        : s
+    )
+    const w = await world(steps)
+    const p = await w.prospect()
+    const drafted = assignVariant(
+      { prospectId: p.id, campaignId: w.campaignId, stepKey: 'intro' },
+      variants,
+      null
+    ).key
+    const other = drafted === 'a' ? 'b' : 'a'
+    // The Draft waits for a Rep first, so the send comes on a later run.
+    w.t.deps.engineDrafts.make = () => ({ ungrounded: true, autoSendable: false })
+    await w.tick()
+    expect(w.sent()).toBe(0)
+    w.t.deps.engineDrafts.make = undefined
+    for (const d of w.t.deps.engineDrafts.drafts) {
+      d.ungrounded = false
+      d.autoSendable = true
+    }
+    const promoted = await w.call(
+      'POST',
+      `/v1/campaigns/${w.campaignId}/steps/intro/variants/${other}/promote`
+    )
+    expect(promoted.status).toBe(200)
+    w.t.deps.clock.advance('24h')
+    await w.tick()
+    expect(w.sent()).toBe(1)
+    const log = await w.t.deps.engine.enrollments.activity(w.org, p.enrollmentId, null, 10)
+    expect(log.items.find((e) => e.kind === 'sent')?.variantKey).toBe(drafted)
+  })
+
   test('a wait holds until its time, then the branch completes the Enrollment', async () => {
     const w = await world()
     const p = await w.prospect()
