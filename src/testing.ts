@@ -10,21 +10,34 @@ import {
   type TokenVerifier,
 } from 'tula-closeline-kit'
 import {
+  createMemoryContactGuard,
   createMemoryErrorReporter,
   createMemoryQueue,
   createTestJwks,
   createTestKeyPair,
   createVirtualTime,
+  type MemoryContactGuard,
   type MemoryErrorReporter,
   type MemoryQueue,
   type MintTokenOptions,
   mintTestToken,
   type VirtualTime,
 } from 'tula-closeline-kit/testing'
+import { createSecretBoxVault } from '~/adapters/crypto/vault'
+import { createMemoryAudienceCheckStore } from '~/adapters/memory/audience-check-store'
 import { createMemoryBrandVoiceStore } from '~/adapters/memory/brand-voice-store'
 import { createMemoryCampaignStore } from '~/adapters/memory/campaign-store'
 import { createMemoryCore, type MemoryCore } from '~/adapters/memory/core'
+import { createMemoryEnrollmentStore } from '~/adapters/memory/enrollment-store'
 import { createMemoryFitStore } from '~/adapters/memory/fit-store'
+import {
+  createMemoryLinkedInProvider,
+  type MemoryLinkedInProvider,
+} from '~/adapters/memory/linkedin-provider'
+import {
+  createMemoryLinkedinStore,
+  type MemoryLinkedinStore,
+} from '~/adapters/memory/linkedin-store'
 import {
   createMemoryMailTransport,
   type MemoryMailTransport,
@@ -33,6 +46,7 @@ import { createMemoryMailboxStore } from '~/adapters/memory/mailbox-store'
 import { createMemoryProviderConfig } from '~/adapters/memory/provider-config'
 import type { MemoryProvider, MemoryVerifier } from '~/adapters/memory/providers'
 import { createMemorySecretBox } from '~/adapters/memory/secret-box'
+import { createMemorySendStore } from '~/adapters/memory/send-store'
 import { createMemorySignalStore } from '~/adapters/memory/signal-store'
 import { createMemoryEnrichmentStore } from '~/adapters/memory/store'
 import { createApp } from '~/app'
@@ -42,7 +56,9 @@ import { loadEnv } from '~/env'
 import type { AppEnv } from '~/http/types'
 import { SERVICE } from '~/info'
 import { type OutboundDefinition, registry } from '~/messages'
+import { campaignHandlers } from '~/modules/campaign/audience'
 import { enrichmentHandlers } from '~/modules/enrichment/handlers'
+import type { LinkedinChannelDisabled } from '~/modules/linkedin/deps'
 import type { MailboxStateChanged } from '~/modules/mailbox/deps'
 import type { SignalDeps, SignalEvent } from '~/modules/signal/deps'
 
@@ -58,6 +74,8 @@ export type TestDeps = Container & {
   queue: MemoryQueue<OutboundDefinition>
   /** Core in memory: seed Prospects, read what enrichment wrote, count the calls. */
   core: MemoryCore
+  /** Contact Check stand-in: allow or deny a Prospect, or make the check unavailable. */
+  guard: MemoryContactGuard
   /** The provider settings; a test sets them per Organization. */
   config: ReturnType<typeof createMemoryProviderConfig>
   /** The store in memory, to read spend. */
@@ -68,10 +86,16 @@ export type TestDeps = Container & {
   mail: MemoryMailTransport
   /** The Outlook stand-in, same controls. */
   outlookMail: MemoryMailTransport
+  /** The LinkedIn provider stand-in: complete a hosted login, change an account's status, fail it. */
+  linkedinProvider: MemoryLinkedInProvider
+  /** The LinkedIn store in memory, to set the channel's state. */
+  linkedinStore: MemoryLinkedinStore
   /** Every `mailbox.state_changed` published, in order. */
   mailEvents: { organizationId: string; event: MailboxStateChanged }[]
   /** Every `signal.recorded` and `prospect.fit_changed` published, in order. */
   signalEvents: { organizationId: string; event: SignalEvent }[]
+  /** The `linkedin.channel_disabled` events published, in order. */
+  linkedinEvents: { organizationId: string; event: LinkedinChannelDisabled }[]
   /** Every JSON log line written, in order. */
   logLines: string[]
   /** Every call to `reportError`, in order. */
@@ -124,18 +148,22 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     CORE_URL: 'https://core.test',
     CORE_INTERNAL_SECRET: 'testing-shared-secret-0123456789-abcdefg',
     MAIL_STATE_SECRET: 'testing-mail-state-secret-0123456789-abcdef',
+    MAIL_UNSUBSCRIBE_URL: 'https://app.test/unsubscribe',
     ...overrides.env,
   })
   const queue = createMemoryQueue({ registry, clock: time.clock, sleep: time.sleep })
   const processed = createMemoryProcessedStore({ clock: time.clock })
   const core = createMemoryCore()
-  const config = createMemoryProviderConfig()
+  const secretBox = createMemorySecretBox()
+  const vault = createSecretBoxVault(secretBox)
+  const config = createMemoryProviderConfig(vault)
   const store = createMemoryEnrichmentStore()
   const enrichment: Container['enrichment'] = {
     store,
     core: core.prospects,
     access: core.access,
     config,
+    vault,
     providers: overrides.providers ?? [],
     verifiers: overrides.verifiers ?? [],
     queue,
@@ -153,10 +181,17 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     },
   }
 
+  const guard = createMemoryContactGuard()
   const campaigns: Container['campaigns'] = {
     store: createMemoryCampaignStore(),
     access: core.access,
     clock: time.clock,
+    enrollments: createMemoryEnrollmentStore(),
+    checks: createMemoryAudienceCheckStore(),
+    audience: core.audience,
+    guard,
+    queue,
+    logger,
   }
 
   const brandVoice: Container['brandVoice'] = {
@@ -198,11 +233,36 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     store: createMemoryMailboxStore(),
     access: core.access,
     clock: time.clock,
-    secretBox: createMemorySecretBox(),
+    secretBox,
     transports: { gmail: mail, outlook: outlookMail },
     stateSecret: env.MAIL_STATE_SECRET,
     events: async (organizationId, event) => {
       mailEvents.push({ organizationId, event })
+    },
+    logger,
+  }
+
+  const send: Container['send'] = {
+    store: createMemorySendStore(() => time.clock.now().toISOString()),
+    mailboxes,
+    campaigns: campaigns.store,
+    guard,
+    clock: time.clock,
+    logger,
+    unsubscribe: { secret: env.MAIL_STATE_SECRET, url: env.MAIL_UNSUBSCRIBE_URL },
+    organizationDailyCap: env.MAIL_ORG_DAILY_CAP,
+  }
+
+  const linkedinEvents: TestDeps['linkedinEvents'] = []
+  const linkedinProvider = createMemoryLinkedInProvider(time.clock)
+  const linkedinStore = createMemoryLinkedinStore()
+  const linkedin: Container['linkedin'] = {
+    store: linkedinStore,
+    access: core.access,
+    clock: time.clock,
+    provider: linkedinProvider,
+    events: async (organizationId, event) => {
+      linkedinEvents.push({ organizationId, event })
     },
     logger,
   }
@@ -225,10 +285,16 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     signals,
     fit,
     signalEvents,
+    send,
+    linkedin,
+    linkedinProvider,
+    linkedinStore,
     mail,
     outlookMail,
     mailEvents,
+    linkedinEvents,
     core,
+    guard,
     config,
     store,
     consumer: createOutboundConsumer({
@@ -236,7 +302,7 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
       store: processed,
       logger,
       errorReporter: errors,
-      handlers: enrichmentHandlers(enrichment),
+      handlers: { ...enrichmentHandlers(enrichment), ...campaignHandlers(campaigns) },
       concurrency: overrides.consumerConcurrency ?? env.CONSUMER_CONCURRENCY,
       sleep: time.sleep,
     }),

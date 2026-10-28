@@ -27,6 +27,7 @@ const REQUIRED_OUTSIDE_LOCAL = [
   'CORE_URL',
   'CORE_INTERNAL_SECRET',
   'MAIL_STATE_SECRET',
+  'MAIL_UNSUBSCRIBE_URL',
 ] as const
 
 /**
@@ -80,6 +81,9 @@ const LOCAL_MAIL_STATE_SECRET = 'local-only-mail-state-secret-do-not-use'
 
 /** The shortest connect-attempt signing secret, in characters. */
 const MIN_MAIL_STATE_SECRET_LENGTH = 32
+
+/** The public unsubscribe page a local run links to (the portal's address). */
+const LOCAL_MAIL_UNSUBSCRIBE_URL = 'http://127.0.0.1:3000/unsubscribe'
 
 /** The keys of a Mailbox provider's endpoints, which must be https outside `local`. */
 const MAIL_ENDPOINT_KEYS = [
@@ -153,6 +157,14 @@ const schema = z
     ENRICHMENT_RETRY_BASE_MS: integer(1, 60_000).default(200),
     /** How long a run stays claimed by one worker before another may take it over, in seconds. */
     ENRICHMENT_RUN_LEASE_SECONDS: integer(5, 3_600).default(120),
+    /** Apollo's API origin (person and company data); a Fake in tests and local runs. */
+    APOLLO_BASE_URL: z.url().max(2_048).default('https://api.apollo.io'),
+    /** ZeroBounce's API origin (email verification). */
+    ZEROBOUNCE_BASE_URL: z.url().max(2_048).default('https://api.zerobounce.net'),
+    /** Consecutive failures after which a provider's circuit opens and its calls are skipped. */
+    PROVIDER_CIRCUIT_FAILURES: integer(1, 100).default(5),
+    /** How long an open circuit refuses calls before one trial call is allowed, in ms. */
+    PROVIDER_CIRCUIT_OPEN_MS: integer(100, 3_600_000).default(30_000),
 
     /** Core's origin for the enrichment read and write-back. Unset in `local` means in-memory core; required elsewhere. */
     CORE_URL: z.url().max(2_048).optional(),
@@ -212,6 +224,10 @@ const schema = z
     MAIL_CALL_MAX_TRIES: integer(1, 5).default(3),
     /** The first retry delay of a Mailbox provider call, in ms; it doubles per try, jittered. */
     MAIL_RETRY_BASE_MS: integer(1, 60_000).default(200),
+    /** Where the unsubscribe link in every email points (the public page); the signed token is appended. Required outside `local`. */
+    MAIL_UNSUBSCRIBE_URL: z.url().max(2_048).optional(),
+    /** The most emails the Organization sends in one UTC day across all its Mailboxes. */
+    MAIL_ORG_DAILY_CAP: integer(1, 100_000).default(500),
   })
   .refine((env) => env.SHUTDOWN_GRACE_MS + env.SHUTDOWN_TIMEOUT_MS <= MAX_SHUTDOWN_TOTAL_MS, {
     message: `SHUTDOWN_GRACE_MS plus SHUTDOWN_TIMEOUT_MS must not exceed ${MAX_SHUTDOWN_TOTAL_MS} ms in total`,
@@ -318,6 +334,7 @@ const schema = z
     AWS_REGION: env.AWS_REGION ?? LOCAL_AWS_REGION,
     MAIL_STATE_SECRET: env.MAIL_STATE_SECRET ?? LOCAL_MAIL_STATE_SECRET,
     MAIL_OAUTH_REDIRECT_URI: env.MAIL_OAUTH_REDIRECT_URI ?? LOCAL_MAIL_REDIRECT_URI,
+    MAIL_UNSUBSCRIBE_URL: env.MAIL_UNSUBSCRIBE_URL ?? LOCAL_MAIL_UNSUBSCRIBE_URL,
   }))
 
 /** The validated process configuration. */

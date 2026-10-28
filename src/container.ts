@@ -4,6 +4,7 @@ import { createDb, type Transaction, withOrganization } from 'tula-closeline-db'
 import {
   type Clock,
   createErrorReporter,
+  createHttpContactGuard,
   createLogger,
   createMemoryProcessedStore,
   createRemoteKeySet,
@@ -17,34 +18,45 @@ import {
   type TokenVerifier,
 } from 'tula-closeline-kit'
 import { type Consumer, createSqsQueue } from 'tula-closeline-kit/queue'
-import { createMemoryQueue } from 'tula-closeline-kit/testing'
+import { createMemoryContactGuard, createMemoryQueue } from 'tula-closeline-kit/testing'
 import { createLocalKeySecretBox, createUnconfiguredSecretBox } from '~/adapters/crypto/secret-box'
+import { createSecretBoxVault } from '~/adapters/crypto/vault'
 import { createGmailMailTransport } from '~/adapters/gmail/mail-transport'
 import { createGraphMailTransport } from '~/adapters/graph/mail-transport'
 import { createHttpCoreProspects } from '~/adapters/http/core'
+import { createMemoryAudienceCheckStore } from '~/adapters/memory/audience-check-store'
 import { createMemoryCore } from '~/adapters/memory/core'
+import { createMemoryLinkedInProvider } from '~/adapters/memory/linkedin-provider'
 import { createMemoryMailTransport } from '~/adapters/memory/mail-transport'
 import { createMemorySecretBox } from '~/adapters/memory/secret-box'
 import { createPostgresBrandVoiceStore } from '~/adapters/postgres/brand-voice-store'
 import { createPostgresCampaignStore } from '~/adapters/postgres/campaign-store'
+import { createPostgresEnrollmentStore } from '~/adapters/postgres/enrollment-store'
 import { createPostgresFitStore } from '~/adapters/postgres/fit-store'
+import { createPostgresLinkedinStore } from '~/adapters/postgres/linkedin-store'
 import { createPostgresMailboxStore } from '~/adapters/postgres/mailbox-store'
 import { createPostgresProviderConfig } from '~/adapters/postgres/provider-config'
+import { createPostgresSendStore } from '~/adapters/postgres/send-store'
 import { createPostgresSignalStore } from '~/adapters/postgres/signal-store'
 import { createPostgresEnrichmentStore } from '~/adapters/postgres/store'
+import { createApolloProvider } from '~/adapters/providers/apollo'
+import { createCircuit } from '~/adapters/providers/circuit'
+import { createZeroBounceVerifier } from '~/adapters/providers/zerobounce'
 import { createOutboundConsumer } from '~/consumer'
 import { describeError } from '~/describe-error'
 import { type Env, loadEnv } from '~/env'
 import { SERVICE } from '~/info'
 import { type OutboundEnvelope, registry } from '~/messages'
 import type { BrandVoiceDeps } from '~/modules/brand-voice/deps'
+import { campaignHandlers } from '~/modules/campaign/audience'
 import type { CampaignDeps } from '~/modules/campaign/deps'
 import type { EnrichmentDeps } from '~/modules/enrichment/deps'
 import { enrichmentHandlers } from '~/modules/enrichment/handlers'
 import type { FitDeps } from '~/modules/fit/deps'
+import type { LinkedinDeps } from '~/modules/linkedin/deps'
 import type { MailboxDeps } from '~/modules/mailbox/deps'
+import type { SendDeps } from '~/modules/send/deps'
 import type { SignalDeps } from '~/modules/signal/deps'
-import type { CredentialVault } from '~/ports/provider-config'
 import { trackerSafe } from '~/tracker-safe'
 
 /** One dependency probe for `/readyz`: resolve when healthy, reject or stall when not. */
@@ -92,6 +104,10 @@ export type Container = {
   signals: SignalDeps
   /** Everything the fit module needs; its service functions take this first. */
   fit: FitDeps
+  /** Everything the send pipeline needs. */
+  send: SendDeps
+  /** Everything the LinkedIn module needs; its service functions take this first. */
+  linkedin: LinkedinDeps
   /** The queue consumer; built here, started by `server.ts` and stopped on shutdown. */
   consumer: Consumer
   /** Probes run by `/readyz`: the database. */
@@ -148,9 +164,6 @@ function createQueue(env: Env): Queue<OutboundEnvelope> {
   })
 }
 
-/** No key management exists yet (ADR pending), so no credential opens and every provider is skipped. */
-const unconfiguredVault: CredentialVault = { open: async () => null }
-
 /**
  * The single composition root: the only place adapters and process-wide objects are constructed.
  * Core's Prospect read and write-back use the HTTP adapter outside `local` or whenever `CORE_URL`
@@ -185,8 +198,8 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
       ports: [
         'core access check',
         'membership id and Team lookup',
-        'enrichment providers',
-        'email verifiers',
+        'audience listing from core',
+        'audience check results',
       ],
     })
   }
@@ -208,13 +221,38 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
           logger,
         })
       : undefined
+  const secretBox =
+    env.MAIL_SECRET_BOX_KEY !== undefined
+      ? createLocalKeySecretBox(env.MAIL_SECRET_BOX_KEY)
+      : env.ENVIRONMENT === 'local'
+        ? createMemorySecretBox()
+        : createUnconfiguredSecretBox()
+  const vault = createSecretBoxVault(secretBox)
+  const circuit = () =>
+    createCircuit({
+      failures: env.PROVIDER_CIRCUIT_FAILURES,
+      openMs: env.PROVIDER_CIRCUIT_OPEN_MS,
+      now: () => Date.now(),
+    })
+  // Fails closed: the memory guard denies every Prospect, so local without core sends nothing.
+  const guardHttp =
+    env.ENVIRONMENT !== 'local' || env.CORE_URL !== undefined
+      ? createHttpContactGuard({
+          baseUrl: env.CORE_URL as string,
+          secret: env.CORE_INTERNAL_SECRET as string,
+          environment: env.ENVIRONMENT,
+          caller: 'outbound',
+          logger,
+        })
+      : undefined
   const enrichment: EnrichmentDeps = {
     store: createPostgresEnrichmentStore(inOrganization),
     core: coreHttp ?? core.prospects,
     access: core.access,
-    config: createPostgresProviderConfig(inOrganization, unconfiguredVault),
-    providers: [],
-    verifiers: [],
+    config: createPostgresProviderConfig(inOrganization, vault),
+    vault,
+    providers: [createApolloProvider({ baseUrl: env.APOLLO_BASE_URL, guard: circuit() })],
+    verifiers: [createZeroBounceVerifier({ baseUrl: env.ZEROBOUNCE_BASE_URL, guard: circuit() })],
     queue,
     clock: systemClock,
     sleep: systemSleep,
@@ -233,18 +271,18 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     store: createPostgresCampaignStore(inOrganization),
     access: core.access,
     clock: systemClock,
+    enrollments: createPostgresEnrollmentStore(inOrganization),
+    checks: createMemoryAudienceCheckStore(),
+    audience: core.audience,
+    guard: guardHttp ?? createMemoryContactGuard(),
+    queue,
+    logger,
   }
   const brandVoice: BrandVoiceDeps = {
     store: createPostgresBrandVoiceStore(inOrganization),
     access: core.access,
     clock: systemClock,
   }
-  const secretBox =
-    env.MAIL_SECRET_BOX_KEY !== undefined
-      ? createLocalKeySecretBox(env.MAIL_SECRET_BOX_KEY)
-      : env.ENVIRONMENT === 'local'
-        ? createMemorySecretBox()
-        : createUnconfiguredSecretBox()
   // There is no event bus in this service yet; Signal and fit events are logged (ids and numbers only).
   const signalEvents: SignalDeps['events'] = async (organizationId, event) => {
     logger.info(event.name, { organizationId, ...event.payload })
@@ -264,6 +302,18 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     access: core.access,
     clock: systemClock,
     events: signalEvents,
+  }
+  const linkedin: LinkedinDeps = {
+    store: createPostgresLinkedinStore(inOrganization),
+    access: core.access,
+    clock: systemClock,
+    // No vendor adapter exists yet: only local runs get the stand-in, anywhere else connecting is unavailable.
+    provider: env.ENVIRONMENT === 'local' ? createMemoryLinkedInProvider(systemClock) : null,
+    // There is no event bus in this service yet; the change is logged until one exists.
+    events: async (organizationId, event) => {
+      logger.info('linkedin.channel_disabled', { organizationId, ...event })
+    },
+    logger,
   }
   const mailboxes: MailboxDeps = {
     store: createPostgresMailboxStore(inOrganization),
@@ -319,12 +369,22 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     },
     logger,
   }
+  const send: SendDeps = {
+    store: createPostgresSendStore(inOrganization),
+    mailboxes,
+    campaigns: campaigns.store,
+    guard: campaigns.guard,
+    clock: systemClock,
+    logger,
+    unsubscribe: { secret: env.MAIL_STATE_SECRET, url: env.MAIL_UNSUBSCRIBE_URL },
+    organizationDailyCap: env.MAIL_ORG_DAILY_CAP,
+  }
   const consumer = createOutboundConsumer({
     queue,
     store: processed,
     logger,
     errorReporter: errors,
-    handlers: enrichmentHandlers(enrichment),
+    handlers: { ...enrichmentHandlers(enrichment), ...campaignHandlers(campaigns) },
     concurrency: env.CONSUMER_CONCURRENCY,
   })
 
@@ -347,6 +407,8 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     mailboxes,
     signals,
     fit,
+    send,
+    linkedin,
     consumer,
     readinessChecks: [
       {
@@ -363,6 +425,7 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     },
     close: async () => {
       coreHttp?.close()
+      guardHttp?.close()
       await errors.close(REPORTER_CLOSE_MS)
       await database.close()
     },

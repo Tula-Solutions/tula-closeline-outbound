@@ -7,6 +7,7 @@ import {
   type ProviderKey,
   type UserId,
 } from 'tula-closeline-contract'
+import type { CoreAudience } from '~/ports/audience'
 import {
   type AccessCaller,
   type CoreAccess,
@@ -45,6 +46,8 @@ export type SeedProspect = {
 export type MemoryCore = {
   prospects: CoreProspects
   access: CoreAccess
+  /** Audience reads in pages. */
+  audience: CoreAudience
   /** Adds a Prospect to an Organization. */
   seed: (organizationId: OrganizationId, prospect: SeedProspect) => void
   /** Puts Reps on a Manager's Team. */
@@ -156,6 +159,43 @@ export function createMemoryCore(): MemoryCore {
         })
         found.replays.set(write.runId, results)
         return { results: results.map((entry) => ({ ...entry })) }
+      },
+    },
+
+    audience: {
+      // shortcut: filters by owner only (the other filter fields match everything), and "verified"
+      // means the Prospect has an email; upgrade with core's real internal audience route.
+      async list(viewer, audience, after, limit) {
+        const reps = new Set<string>(teams.get(`${viewer.organizationId}|${viewer.userId}`) ?? [])
+        const prefix = `${viewer.organizationId}|`
+        const visible: { id: ProspectId; emailVerified: boolean }[] = []
+        for (const [stored, found] of prospects) {
+          if (!stored.startsWith(prefix)) {
+            continue
+          }
+          const id = stored.slice(prefix.length) as ProspectId
+          const sees =
+            viewer.role === 'owner' ||
+            viewer.role === 'admin' ||
+            found.ownerId === viewer.userId ||
+            (viewer.role === 'manager' && reps.has(found.ownerId))
+          const wanted =
+            audience.kind === 'prospects'
+              ? audience.prospectIds.includes(id)
+              : audience.ownerMembershipId === undefined ||
+                membershipOf(found.ownerId) === audience.ownerMembershipId
+          if (sees && wanted) {
+            visible.push({ id, emailVerified: found.values.email !== undefined })
+          }
+        }
+        visible.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+        const rest = after === null ? visible : visible.filter((m) => m.id > after)
+        const page = rest.slice(0, limit)
+        const last = page[page.length - 1]
+        return {
+          items: page.map((m) => ({ prospectId: m.id, emailVerified: m.emailVerified })),
+          next: rest.length > limit && last ? last.id : null,
+        }
       },
     },
 

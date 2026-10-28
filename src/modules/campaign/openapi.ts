@@ -12,6 +12,13 @@ export type CampaignRouteName =
   | 'pauseCampaign'
   | 'getSequence'
   | 'setSequence'
+  | 'startAudienceCheck'
+  | 'getAudienceCheck'
+  | 'enrollProspects'
+  | 'listEnrollments'
+  | 'getEnrollment'
+  | 'listEnrollmentActivity'
+  | 'removeEnrollment'
 
 const ALL_ERRORS: Record<string, { code: string; status: number }> = {
   ...ERRORS,
@@ -25,7 +32,7 @@ const ALWAYS = ['auth.unauthenticated', 'server.internal'] as const
 export function contractRoute(name: CampaignRouteName) {
   const route = CAMPAIGN_ROUTES[name]
   return {
-    method: route.method.toLowerCase() as 'get' | 'post' | 'put' | 'patch',
+    method: route.method.toLowerCase() as 'get' | 'post' | 'put' | 'patch' | 'delete',
     path: route.path,
     description: route.description,
   }

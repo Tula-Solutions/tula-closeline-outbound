@@ -53,7 +53,8 @@ outside `local`; the adapter is `src/adapters/http/core.ts`), `CORE_CALL_TIMEOUT
 `GRAPH_API_BASE_URL`,
 `MAIL_OAUTH_REDIRECT_URI`, `MAIL_STATE_SECRET` (required outside `local`), `MAIL_SECRET_BOX_KEY`
 (a local-only key, refused in staging and prod), `MAIL_CALL_TIMEOUT_MS`, `MAIL_CALL_MAX_TRIES`,
-`MAIL_RETRY_BASE_MS`. Add a key in both files.
+`MAIL_RETRY_BASE_MS`, and for enrichment vendors `APOLLO_BASE_URL`, `ZEROBOUNCE_BASE_URL`,
+`PROVIDER_CIRCUIT_FAILURES`, `PROVIDER_CIRCUIT_OPEN_MS`. Add a key in both files.
 
 ## Campaigns (`src/modules/campaign`)
 
@@ -65,6 +66,19 @@ running Campaign accepts it and the version applies to new Steps only. Every mut
 `Idempotency-Key`. The Rep's membership id comes from `CoreAccess.membershipIdOf`, which is a fake
 mapping until core exposes it; the database has no column for automatic variant promotion, so only
 `promotion.mode: 'manual'` is accepted.
+
+Enrollments and the audience check (`enrollment.ts`, `audience.ts`; stores `ports/enrollment-store.ts`,
+memory and Postgres). `POST .../enrollments` takes up to 100 Prospect ids into a running or paused
+Campaign, judged one by one: out of view is `not_found`, a Prospect in another active Campaign or
+this one is `already_active`, and the kit `ContactGuard` (core's Contact Check, channel email,
+`agent_initiated`) decides the rest. `consent.suppressed` stops the Enrollment as `suppressed`; any
+other denial, including core being unreachable, stops it as `no_consent` (fails closed, no setting
+skips it). Each Prospect has one row per Campaign, so a re-run makes no duplicate. The audience
+check (`audience.check_page` queue message) walks core's Prospects 100 at a time, one message per
+page carrying the running counts, so no request or job holds the whole list. `CoreAudience` and the
+audience-check store are memory adapters only (core has no internal list route and the db no check
+table; the shortcut comments say when to upgrade), so outside `local` the service warns.
+`enrollment.stopped` is logged by id only; there is no event bus yet.
 
 ## Mailboxes (`src/modules/mailbox`)
 
@@ -88,6 +102,22 @@ ids) then `/send`; the draft call retries on 5xx, the send step only on 429/503,
 timeout. Microsoft has no per-app revoke, so `revoke` is a no-op and disconnecting deletes the
 tokens; `interaction_required` and `invalid_grant` both mean `grant_invalid`. Not run against real
 Microsoft yet.
+
+## LinkedIn (`src/modules/linkedin`)
+
+- Routes: `POST /v1/linkedin/accounts/connection` (Rep only, Idempotency-Key, answers the provider's
+  hosted login), `GET /v1/linkedin/accounts[/{accountId}]`, `DELETE /v1/linkedin/accounts/{accountId}`.
+  Visibility is the Mailbox rule: Owner and Admin all, Manager self plus their Team's Reps, Rep self.
+- Start needs the channel enabled (`linkedin.channel_disabled`) and the current risk wording accepted
+  (`linkedin.risk_not_accepted`); the Admin switch and acceptance routes are the next ticket, and the
+  store only reads them.
+- Disconnect is for the owning Rep, or an Owner or Admin for a leaver; anyone else gets
+  `linkedin.not_account_owner`. `closeline_outbound` cannot delete rows, so disconnect sets the status
+  and a reconnect reuses the row, its id and its limits. A repeat is a no-op.
+- `ports/linkedin-provider.ts` has only the memory adapter: the vendor is undecided. With no provider
+  (anything but `ENVIRONMENT=local`) start answers `server.unavailable`.
+- `completeConnection` (service) records a finished hosted login; no route calls it until the
+  provider webhook ticket. The provider's account reference is stored and never returned or logged.
 
 ## Brand voice (`src/modules/brand-voice`)
 
@@ -115,6 +145,49 @@ default-language field, so there is none yet.
 - Fit is scored lazily on `getProspectFit` and stored; a change emits `prospect.fit_changed`.
   Criteria edits do not rescore in the background, so `listFitScores` can be stale until read.
 - `findProspectIdByEmail` is not served by core's HTTP yet (the adapter returns null).
+## Send
+
+`modules/send/service.ts` `send(deps, org, request)` decides and sends one email. The request
+carries what the caller resolved (Campaign, Prospect, key `enrollmentId:step:attemptEpoch`,
+recipient and `verified`, Mailbox ids, subject and text); there is no Draft or Enrollment module
+to read from yet. Checks run in this order and each outcome is stored under the key in
+`mail_messages` before anything leaves: Campaign running, window (the Prospect's zone when
+`windowZone` says so), address verified, Contact Check (`guard`, email, `agent_initiated`;
+fails closed, no setting turns it off), a usable Mailbox, then the limits. A refusal or deferral
+returns the stored record and sends nothing; a settled key throws `send.duplicate`; a deferred
+key is decided again and keeps its row. `REASON_CODES` maps a reason to its error code.
+
+Limits: `SendStore.reserve` takes a per-Organization advisory lock, counts `sending` and `sent`
+rows (UTC day, clock hour) and inserts the `sending` row in one transaction, so parallel sends
+cannot pass a limit. Order: gap, hour, day, then `MAIL_ORG_DAILY_CAP` (Organization, no limits
+table yet). Rotation picks the Mailbox with the fewest sends today, then the longest idle; a
+follow-up stays on the first message's Mailbox and thread. Campaign `dailyCap` is not enforced.
+
+Failure: the provider is called after the row is `sending`. A timeout, or a failed settle, leaves
+the row `sending` (it still counts) and never sends again; `reconcile` settles rows older than
+ten minutes as `sent` with no provider ids, since the provider has no lookup. Any other provider
+error settles `failed`, final for the key (a retry needs a new `attemptEpoch`). Every message
+carries `List-Unsubscribe` (one-click) and a signed link from `MAIL_UNSUBSCRIBE_URL`
+(`unsubscribe.ts`, 30 days); the route behind it is not built. `GET /v1/mail/capacity` shows
+remaining sends and the next send time per Mailbox (`capacity.ts`). No internal `submitSend` HTTP
+route yet (no inbound shared-secret auth).
+## Enrichment providers and settings (`src/adapters/providers`, `src/modules/enrichment/settings*.ts`)
+
+Apollo (person, company) and ZeroBounce (email verifier) are the two adapters. Each takes an
+injected `fetch`, so the contract tests in `providers.test.ts` run on fixtures with no network; the
+live tests there run only when `APOLLO_LIVE_KEY` / `ZEROBOUNCE_LIVE_KEY` are set. An adapter never
+retries: the waterfall's `callWithRetry` owns timeout and retry. Errors carry fixed words, never a
+URL or vendor text (ZeroBounce takes its key in the query string). `circuit.ts` opens after
+`PROVIDER_CIRCUIT_FAILURES` consecutive outage-like failures per provider and lets one trial through
+after `PROVIDER_CIRCUIT_OPEN_MS`; a rejected key does not count. It is in this process, not shared.
+
+Settings routes: `GET /v1/enrichment/providers`, `PUT /v1/enrichment/providers/{provider}` (key is
+write-only, sealed by the secret box bound to Organization and provider; omitted keeps, null removes),
+`GET`/`PUT /v1/enrichment/waterfall`. The db has no version column, so the waterfall `version` is
+derived from the stored order (0 while none is stored); a stale `expectedVersion` is
+`enrichment.version_conflict`, and a replay of the same order is accepted. Outside `local` the
+secret box needs `MAIL_SECRET_BOX_KEY`-style configuration; unconfigured, setting a key answers
+`server.unavailable`.
 
 ## Hot paths
 
