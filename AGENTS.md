@@ -218,3 +218,16 @@ name the function here when a new hot path appears.
 ## Issues
 
 All tickets live in the hub: `gh issue list -R Tula-Solutions/tula-closeline --label repo:outbound`.
+
+## Model and web search (`src/adapters/anthropic`, `src/adapters/exa`)
+
+`container.ai` holds the `Model` and `WebSearch` ports: Anthropic (`ANTHROPIC_API_KEY`, model
+`ANTHROPIC_MODEL`) and Exa (`EXA_API_KEY`) when their keys are set, memory stand-ins when `local`,
+otherwise null. Both go through `adapters/vendor-retry.ts` (per-try timeout, jittered bounded retry,
+fixed-word errors; keys travel only in headers and never reach an error or log). Anthropic answers
+through a forced tool call; sources are escaped `<source>` data blocks; the answer is untrusted.
+Before each call the Organization's month is read from `model_usage` and a spent budget throws
+`ModelBudgetExceededError` (callers map it to `draft.budget_exceeded`); usage is recorded after.
+`ModelRequest.organizationId` is required in practice: a real model refuses a call without it.
+The model refuses to construct unless `ANTHROPIC_NO_TRAINING_CONFIRMED=true`. Budget check then
+record is not atomic, so concurrent calls can overshoot by their own cost.

@@ -44,6 +44,16 @@ test('configuration falls back to defaults for everything but the environment', 
     MAIL_RETRY_BASE_MS: 200,
     MAIL_UNSUBSCRIBE_URL: 'http://127.0.0.1:3000/unsubscribe',
     MAIL_ORG_DAILY_CAP: 500,
+    ANTHROPIC_BASE_URL: 'https://api.anthropic.com',
+    ANTHROPIC_MODEL: 'claude-sonnet-5-5',
+    ANTHROPIC_NO_TRAINING_CONFIRMED: 'false',
+    MODEL_MONTHLY_BUDGET_MICROS: 50_000_000,
+    MODEL_INPUT_MICROS_PER_MILLION: 3_000_000,
+    MODEL_OUTPUT_MICROS_PER_MILLION: 15_000_000,
+    EXA_BASE_URL: 'https://api.exa.ai',
+    AI_CALL_TIMEOUT_MS: 20_000,
+    AI_CALL_MAX_TRIES: 2,
+    AI_RETRY_BASE_MS: 200,
   })
 })
 
@@ -204,4 +214,11 @@ test('a run lease no longer than the worst-case provider attempt time is rejecte
   expect(
     loadEnv({ ...source, ENRICHMENT_RUN_LEASE_SECONDS: '35' }).ENRICHMENT_RUN_LEASE_SECONDS
   ).toBe(35)
+})
+
+test('the model and web search are unconfigured by default and Anthropic needs no-training confirmation off by default', () => {
+  const env = loadEnv({ ENVIRONMENT: 'local' })
+  expect(env.ANTHROPIC_API_KEY).toBeUndefined()
+  expect(env.EXA_API_KEY).toBeUndefined()
+  expect(env.ANTHROPIC_NO_TRAINING_CONFIRMED).toBe('false')
 })
