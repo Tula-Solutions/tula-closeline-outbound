@@ -167,7 +167,7 @@ const schema = z
     ENRICHMENT_RETRY_BASE_MS: integer(1, 60_000).default(200),
     /** The longest a Research Brief waits for the web search, in ms. */
     RESEARCH_WEB_DEADLINE_MS: integer(10, 60_000).default(8_000),
-    /** The longest one model call for a Research Brief may take, in ms. */
+    /** The longest one model call for a Research Brief may take, in ms; raised to hold the adapter's tries and backoff. */
     RESEARCH_MODEL_TIMEOUT_MS: integer(10, 120_000).default(20_000),
     /** How long a Research Brief stays reusable for an unchanged Prospect, in seconds. */
     RESEARCH_BRIEF_TTL_SECONDS: integer(60, 2_592_000).default(259_200),

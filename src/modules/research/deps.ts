@@ -13,15 +13,31 @@ export type ResearchLimits = {
   briefTtlMs: number
 }
 
+/** Longest the model adapter may take: every try's timeout plus every backoff at maximum jitter. */
+function adapterWorstCaseMs(env: {
+  AI_CALL_TIMEOUT_MS: number
+  AI_CALL_MAX_TRIES: number
+  AI_RETRY_BASE_MS: number
+}): number {
+  let total = env.AI_CALL_TIMEOUT_MS * env.AI_CALL_MAX_TRIES
+  for (let attempt = 2; attempt <= env.AI_CALL_MAX_TRIES; attempt++) {
+    total += env.AI_RETRY_BASE_MS * 2 ** (attempt - 2) * 1.5
+  }
+  return total
+}
+
 /** The research limits from the validated environment. */
 export function researchLimits(env: {
   RESEARCH_WEB_DEADLINE_MS: number
   RESEARCH_MODEL_TIMEOUT_MS: number
+  AI_CALL_TIMEOUT_MS: number
+  AI_CALL_MAX_TRIES: number
+  AI_RETRY_BASE_MS: number
   RESEARCH_BRIEF_TTL_SECONDS: number
 }): ResearchLimits {
   return {
     webDeadlineMs: env.RESEARCH_WEB_DEADLINE_MS,
-    modelTimeoutMs: env.RESEARCH_MODEL_TIMEOUT_MS,
+    modelTimeoutMs: Math.max(env.RESEARCH_MODEL_TIMEOUT_MS, adapterWorstCaseMs(env)),
     briefTtlMs: env.RESEARCH_BRIEF_TTL_SECONDS * 1000,
   }
 }

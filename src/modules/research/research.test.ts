@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import { formatId, type ProspectId } from 'tula-closeline-contract'
+import message from '~/adapters/anthropic/fixtures/message.json'
+import { createAnthropicModel } from '~/adapters/anthropic/model'
+import { createMemoryModelUsageStore } from '~/adapters/memory/model-usage'
 import { ModelBudgetExceededError, type ModelRequest } from '~/ports/model'
 import { WebSearchTimeoutError } from '~/ports/web-search'
 import { createTestApp, newOrganizationId, newUserId, type TestIdentity } from '~/testing'
@@ -244,6 +247,45 @@ describe('Research Brief', () => {
     expect(codeOf(failed.body)).toBe('draft.model_unavailable')
     expect(w.t.deps.researchModel.requests).toHaveLength(1)
     expect((await w.brief(w.admin, prospect)).status).toBe(201)
+  })
+
+  test('a first model try that hangs past the per-try timeout is retried inside the research deadline', async () => {
+    const w = await world({
+      AI_CALL_TIMEOUT_MS: '150',
+      AI_CALL_MAX_TRIES: '2',
+      AI_RETRY_BASE_MS: '1',
+      RESEARCH_MODEL_TIMEOUT_MS: '150',
+    })
+    const prospect = w.seed(w.admin)
+    let calls = 0
+    w.t.deps.research.model = createAnthropicModel({
+      apiKey: 'sk-ant-test',
+      baseUrl: 'https://anthropic.test',
+      model: 'claude-sonnet-5-5',
+      noTraining: true,
+      usage: createMemoryModelUsageStore(),
+      monthlyBudgetMicros: 10_000_000,
+      inputMicrosPerMillion: 3_000_000,
+      outputMicrosPerMillion: 15_000_000,
+      now: () => new Date('2026-10-28T12:00:00Z'),
+      timeoutMs: 150,
+      maxTries: 2,
+      retryBaseMs: 1,
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      random: () => 0.5,
+      fetch: (_url, init) => {
+        calls += 1
+        if (calls > 1) {
+          return Promise.resolve(new Response(JSON.stringify(message), { status: 200 }))
+        }
+        return new Promise((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => reject(new Error('aborted')))
+        })
+      },
+    })
+    const built = await w.brief(w.admin, prospect)
+    expect(built.status).toBe(201)
+    expect(calls).toBe(2)
   })
 
   test('the model sees a bounded number of sources', async () => {
