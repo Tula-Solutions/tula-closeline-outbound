@@ -212,19 +212,28 @@ export function createGraphMailTransport(options: GraphMailTransportOptions): Ma
       if (draft.status !== 201 || id === undefined) {
         throw new MailTransportError('rejected', draft.status)
       }
+      // A 429 or 503 may be an answer to a send that went through, so once one was seen, whatever
+      // follows that is not a 202 is an unknown outcome (never a definite refusal).
       let retried = false
+      const unknownOutcome = (status: number | undefined) =>
+        new MailTransportError('timeout', status)
       const sent = await call(
         `${api}/me/messages/${encodeURIComponent(id)}/send`,
         { method: 'POST', headers: bearer(accessToken) },
         (outcome) => {
-          retried =
+          const again =
             typeof outcome !== 'string' && (outcome.status === 429 || outcome.status === 503)
-          return retried
+          retried ||= again
+          return again
         }
-      )
-      if (sent.status === 404 && retried) {
-        // The draft is gone: an earlier try that looked refused probably sent it. Unknown outcome.
-        throw new MailTransportError('timeout', sent.status)
+      ).catch((error: unknown) => {
+        if (retried && error instanceof MailTransportError && error.failure === 'unavailable') {
+          throw unknownOutcome(error.status)
+        }
+        throw error
+      })
+      if (sent.status !== 202 && retried) {
+        throw unknownOutcome(sent.status)
       }
       if (sent.status !== 202) {
         // Definite refusal: the draft would sit in the person's Drafts folder, so remove it.
