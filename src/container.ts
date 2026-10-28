@@ -39,9 +39,11 @@ import {
 import { createMemoryLinkedInProvider } from '~/adapters/memory/linkedin-provider'
 import { createMemoryMailTransport } from '~/adapters/memory/mail-transport'
 import { createMemoryModel } from '~/adapters/memory/model'
+import { createMemoryPlaybookSearch } from '~/adapters/memory/playbook-search'
 import { createMemorySecretBox } from '~/adapters/memory/secret-box'
 import { createMemoryWebSearch } from '~/adapters/memory/web-search'
 import { createPostgresBrandVoiceStore } from '~/adapters/postgres/brand-voice-store'
+import { createPostgresBriefStore } from '~/adapters/postgres/brief-store'
 import { createPostgresCampaignStore } from '~/adapters/postgres/campaign-store'
 import { createPostgresEnrollmentStore } from '~/adapters/postgres/enrollment-store'
 import { createPostgresFitStore } from '~/adapters/postgres/fit-store'
@@ -74,6 +76,7 @@ import { defaultSendSettings, type LinkedinDeps } from '~/modules/linkedin/deps'
 import type { MailboxDeps } from '~/modules/mailbox/deps'
 import type { MailEventDeps } from '~/modules/mailevent/deps'
 import { mailEventHandlers } from '~/modules/mailevent/service'
+import { type ResearchDeps, researchLimits } from '~/modules/research/deps'
 import type { SendDeps } from '~/modules/send/deps'
 import type { SignalDeps } from '~/modules/signal/deps'
 import type { Model } from '~/ports/model'
@@ -123,6 +126,8 @@ export type Container = {
   mailboxes: MailboxDeps
   /** Everything the signal module needs; its service functions take this first. */
   signals: SignalDeps
+  /** Everything the research module needs. */
+  research: ResearchDeps
   /** Everything the mail event module needs: provider notifications and the unsubscribe page. */
   inboundMail: MailEventDeps
   /** Everything the fit module needs; its service functions take this first. */
@@ -323,6 +328,56 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     clock: systemClock,
     events: signalEvents,
   }
+  const local = env.ENVIRONMENT === 'local'
+  const aiBounds = {
+    timeoutMs: env.AI_CALL_TIMEOUT_MS,
+    maxTries: env.AI_CALL_MAX_TRIES,
+    retryBaseMs: env.AI_RETRY_BASE_MS,
+    sleep: systemSleep,
+    random: Math.random,
+  }
+  const ai: Container['ai'] = {
+    model:
+      env.ANTHROPIC_API_KEY !== undefined
+        ? createAnthropicModel({
+            ...aiBounds,
+            apiKey: env.ANTHROPIC_API_KEY,
+            baseUrl: env.ANTHROPIC_BASE_URL,
+            model: env.ANTHROPIC_MODEL,
+            noTraining: env.ANTHROPIC_NO_TRAINING_CONFIRMED === 'true',
+            usage: createPostgresModelUsageStore(inOrganization),
+            monthlyBudgetMicros: env.MODEL_MONTHLY_BUDGET_MICROS,
+            inputMicrosPerMillion: env.MODEL_INPUT_MICROS_PER_MILLION,
+            outputMicrosPerMillion: env.MODEL_OUTPUT_MICROS_PER_MILLION,
+            now: () => new Date(systemClock.now()),
+          })
+        : local
+          ? createMemoryModel()
+          : null,
+    web:
+      env.EXA_API_KEY !== undefined
+        ? createExaWebSearch({
+            ...aiBounds,
+            apiKey: env.EXA_API_KEY,
+            baseUrl: env.EXA_BASE_URL,
+            now: () => new Date(systemClock.now()),
+          })
+        : local
+          ? createMemoryWebSearch()
+          : null,
+  }
+  const research: ResearchDeps = {
+    store: createPostgresBriefStore(inOrganization),
+    core: prospectsCore,
+    access: core.access,
+    signals,
+    model: ai.model,
+    web: ai.web,
+    playbook: local ? createMemoryPlaybookSearch() : null,
+    clock: systemClock,
+    logger,
+    limits: researchLimits(env),
+  }
   const fit: FitDeps = {
     store: createPostgresFitStore(inOrganization),
     core: prospectsCore,
@@ -473,44 +528,6 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
       leaseSeconds: env.ENGINE_LEASE_SECONDS,
     },
   }
-  const local = env.ENVIRONMENT === 'local'
-  const aiBounds = {
-    timeoutMs: env.AI_CALL_TIMEOUT_MS,
-    maxTries: env.AI_CALL_MAX_TRIES,
-    retryBaseMs: env.AI_RETRY_BASE_MS,
-    sleep: systemSleep,
-    random: Math.random,
-  }
-  const ai: Container['ai'] = {
-    model:
-      env.ANTHROPIC_API_KEY !== undefined
-        ? createAnthropicModel({
-            ...aiBounds,
-            apiKey: env.ANTHROPIC_API_KEY,
-            baseUrl: env.ANTHROPIC_BASE_URL,
-            model: env.ANTHROPIC_MODEL,
-            noTraining: env.ANTHROPIC_NO_TRAINING_CONFIRMED === 'true',
-            usage: createPostgresModelUsageStore(inOrganization),
-            monthlyBudgetMicros: env.MODEL_MONTHLY_BUDGET_MICROS,
-            inputMicrosPerMillion: env.MODEL_INPUT_MICROS_PER_MILLION,
-            outputMicrosPerMillion: env.MODEL_OUTPUT_MICROS_PER_MILLION,
-            now: () => new Date(systemClock.now()),
-          })
-        : local
-          ? createMemoryModel()
-          : null,
-    web:
-      env.EXA_API_KEY !== undefined
-        ? createExaWebSearch({
-            ...aiBounds,
-            apiKey: env.EXA_API_KEY,
-            baseUrl: env.EXA_BASE_URL,
-            now: () => new Date(systemClock.now()),
-          })
-        : local
-          ? createMemoryWebSearch()
-          : null,
-  }
   const consumer = createOutboundConsumer({
     queue,
     store: processed,
@@ -543,6 +560,7 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     brandVoice,
     mailboxes,
     signals,
+    research,
     inboundMail,
     fit,
     send,

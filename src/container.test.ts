@@ -170,3 +170,24 @@ test('enrichment reaches core over HTTP when CORE_URL is set, and in memory othe
     server.stop(true)
   }
 })
+
+test('research uses the vendor model and web search when their keys are set, memory stand-ins otherwise', async () => {
+  const withKeys = createContainer(
+    loadEnv({
+      ENVIRONMENT: 'local',
+      LOG_LEVEL: 'silent',
+      ANTHROPIC_API_KEY: 'test-key',
+      ANTHROPIC_NO_TRAINING_CONFIRMED: 'true',
+      EXA_API_KEY: 'test-key',
+    })
+  )
+  const without = createContainer(loadEnv({ ENVIRONMENT: 'local', LOG_LEVEL: 'silent' }))
+
+  expect(withKeys.research.model).toBe(withKeys.ai.model)
+  expect(withKeys.research.model?.name).not.toBe('memory-model')
+  expect(withKeys.research.web).toBe(withKeys.ai.web)
+  expect(without.research.model?.name).toBe('memory-model')
+  expect(without.research.web).not.toBeNull()
+  await withKeys.close()
+  await without.close()
+})
