@@ -56,6 +56,7 @@ import { createMemoryMailboxStore } from '~/adapters/memory/mailbox-store'
 import { createMemoryModel } from '~/adapters/memory/model'
 import { createMemoryProviderConfig } from '~/adapters/memory/provider-config'
 import type { MemoryProvider, MemoryVerifier } from '~/adapters/memory/providers'
+import { createMemoryRateLimiter } from '~/adapters/memory/rate-limiter'
 import { createMemorySecretBox } from '~/adapters/memory/secret-box'
 import { createMemorySendStore } from '~/adapters/memory/send-store'
 import { createMemorySignalStore } from '~/adapters/memory/signal-store'
@@ -299,6 +300,8 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     clock: time.clock,
     logger,
     secret: env.MAIL_STATE_SECRET,
+    rateLimit: createMemoryRateLimiter(time.clock),
+    trustedProxyHops: env.TRUSTED_PROXY_HOPS,
     verifyPush: async (authorization) => authorization === PUSH_AUTHORIZATION,
     queue,
     stopProspect: (organizationId, prospectId, reason) =>

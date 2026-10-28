@@ -901,6 +901,17 @@
           },
           "429": {
             "description": "rate.limited.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^[1-9][0-9]*$",
+                  "description": "Whole seconds to wait before trying again."
+                },
+                "required": true,
+                "description": "Whole seconds to wait before trying again."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1245,6 +1256,17 @@
           },
           "429": {
             "description": "rate.limited.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^[1-9][0-9]*$",
+                  "description": "Whole seconds to wait before trying again."
+                },
+                "required": true,
+                "description": "Whole seconds to wait before trying again."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1609,6 +1631,17 @@
           },
           "429": {
             "description": "rate.limited.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^[1-9][0-9]*$",
+                  "description": "Whole seconds to wait before trying again."
+                },
+                "required": true,
+                "description": "Whole seconds to wait before trying again."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1978,6 +2011,17 @@
           },
           "429": {
             "description": "rate.limited.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^[1-9][0-9]*$",
+                  "description": "Whole seconds to wait before trying again."
+                },
+                "required": true,
+                "description": "Whole seconds to wait before trying again."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -18805,6 +18849,17 @@
           },
           "429": {
             "description": "rate.limited.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^[1-9][0-9]*$",
+                  "description": "Whole seconds to wait before trying again."
+                },
+                "required": true,
+                "description": "Whole seconds to wait before trying again."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {

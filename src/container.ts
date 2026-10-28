@@ -50,6 +50,7 @@ import { createPostgresMailEventStore } from '~/adapters/postgres/mail-event-sto
 import { createPostgresMailboxStore } from '~/adapters/postgres/mailbox-store'
 import { createPostgresModelUsageStore } from '~/adapters/postgres/model-usage'
 import { createPostgresProviderConfig } from '~/adapters/postgres/provider-config'
+import { createPostgresRateLimiter } from '~/adapters/postgres/rate-limiter'
 import { createPostgresSendStore } from '~/adapters/postgres/send-store'
 import { createPostgresSignalStore } from '~/adapters/postgres/signal-store'
 import { createPostgresEnrichmentStore } from '~/adapters/postgres/store'
@@ -431,6 +432,8 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     clock: systemClock,
     logger,
     secret: env.MAIL_STATE_SECRET,
+    rateLimit: createPostgresRateLimiter(database.db),
+    trustedProxyHops: env.TRUSTED_PROXY_HOPS,
     verifyPush:
       env.GMAIL_PUSH_AUDIENCE !== undefined && env.GMAIL_PUSH_SERVICE_ACCOUNT !== undefined
         ? createGooglePushVerifier({

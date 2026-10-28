@@ -190,13 +190,26 @@ Public routes, mounted before the token middleware: the unsubscribe page (`GET`/
 /v1/public/mail/unsubscribe/{token}`, same answer for known and unknown Prospects, only the token's
 Organization is touched) and the Gmail and Graph notification webhooks. A webhook proves itself with
 a signed state naming Organization and Mailbox (`state.ts`, Graph's `clientState`, Gmail's `state`
-query); the push body is never read. A notice reads the Mailbox inbox (`MailTransport.fetchInbound`,
-headers only) and `ingest` matches it to our Send by thread. Hard bounce (or the third soft one in an
-Enrollment) and complaint suppress through core (`CoreSuppression`, HTTP or memory), a complaint
-also pauses the Mailbox, a reply stops the Enrollment. Each is logged once in `mail_events`
-(idempotent on the provider message id) and published as a `mail.*` event, which today is only
-logged. Nothing schedules `pollMailbox` and nothing creates the subscription or watch that carries
-the state yet; both are open.
+query), Gmail's push also with Google's OIDC token (`GMAIL_PUSH_AUDIENCE`,
+`GMAIL_PUSH_SERVICE_ACCOUNT`; outside `local` it refuses everything until both are set); the push
+body is never read. A webhook only verifies and enqueues a `mail.poll` message; the consumer
+(`mailEventHandlers`) runs `pollMailbox`, which pages the inbox from the Mailbox's `syncCursor`
+(Gmail History id, Graph timestamp) through `MailTransport.fetchInbound` (headers only) and does not
+advance the cursor past a notice that failed. `ingest` matches a notice to our Send by thread. Hard
+bounce (or the third soft one in an Enrollment) and complaint suppress through core
+(`CoreSuppression`, HTTP or memory), a complaint also pauses the Mailbox, and a reply, hard bounce,
+complaint and unsubscribe stop the Prospect's Enrollments (`stopProspect` = the engine's
+`stopForProspect`). Each is logged once in `mail_events` (idempotent on the provider message id) and
+published as a `mail.*` event, which today is only logged. Nothing creates the Gmail watch or Graph
+subscription that carries the state, and nothing polls on a timer: webhooks are the only trigger.
+
+The unsubscribe routes are rate limited (`rate.limited`, 429, `Retry-After`) through the
+`RateLimiter` port (Postgres: the db library's `outbound.unsubscribe_rate_counter` functions; memory:
+a test double). An unusable token counts against the client address (20 an hour); a genuine token
+counts against itself (30 an hour) and is never refused because of the address, since an unsubscribe
+is a legal duty and one-click POSTs come from shared provider addresses. Keys are HMACs. The address
+is `TRUSTED_PROXY_HOPS` entries from the right of `X-Forwarded-For` (default 0 = socket address
+only). Nothing purges old counter rows yet (`purgeUnsubscribeRateCounters` exists).
 
 ## Sequence engine (`src/modules/engine`)
 

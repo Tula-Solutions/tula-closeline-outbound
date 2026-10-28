@@ -1,13 +1,16 @@
 import {
+  ERRORS,
   formatId,
   MAIL_ERRORS,
   type MailboxId,
   type OrganizationId,
   organizationIdSchema,
 } from 'tula-closeline-contract'
+import { AppError } from 'tula-closeline-kit'
 import type { Handlers } from 'tula-closeline-kit/queue'
 import { describeError } from '~/describe-error'
-import { domainError } from '~/http/domain-error'
+import { hashClientAddress } from '~/http/client-address'
+import { domainError, RetryAfterError } from '~/http/domain-error'
 import { type OutboundEnvelope, registry } from '~/messages'
 import * as Mailboxes from '~/modules/mailbox/service'
 import type { InboundNotice } from '~/ports/mail-transport'
@@ -210,9 +213,44 @@ function claimsOf(deps: MailEventDeps, token: string) {
   return claims
 }
 
+/** A client address may fail this many unusable links an hour before it is refused. */
+export const UNUSABLE_LINKS_PER_HOUR = 20
+/** One token may be used this many times an hour (a mail client retries; a script should not). */
+export const TOKEN_USES_PER_HOUR = 30
+const HOUR_SECONDS = 3_600
+
+/**
+ * Checks the token, then counts the attempt. A genuine link is limited by its own token, never by
+ * address: an unsubscribe is a legal duty and one-click POSTs come from shared provider addresses.
+ * The address counter only counts unusable links. Keys are HMACs; the
+ * token and the address are never stored.
+ */
+async function admit(deps: MailEventDeps, token: string, address: string) {
+  const limited = () =>
+    new RetryAfterError(ERRORS['rate.limited'], HOUR_SECONDS, { retryAfter: HOUR_SECONDS })
+  const options = { windowSeconds: HOUR_SECONDS }
+  try {
+    const claims = claimsOf(deps, token)
+    const key = hashClientAddress(token, `${deps.secret}:unsubscribe:token`)
+    if (!(await deps.rateLimit.hit(key, { ...options, limit: TOKEN_USES_PER_HOUR }))) {
+      throw limited()
+    }
+    return claims
+  } catch (error) {
+    if (error instanceof RetryAfterError || !(error instanceof AppError)) {
+      throw error
+    }
+    const key = hashClientAddress(address, `${deps.secret}:unsubscribe:address`)
+    if (!(await deps.rateLimit.hit(key, { ...options, limit: UNUSABLE_LINKS_PER_HOUR }))) {
+      throw limited()
+    }
+    throw error
+  }
+}
+
 /** What the unsubscribe page shows: the sender's name and nothing else. */
-export function unsubscribePage(deps: MailEventDeps, token: string) {
-  claimsOf(deps, token)
+export async function unsubscribePage(deps: MailEventDeps, token: string, address = 'unknown') {
+  await admit(deps, token, address)
   return { organizationName: SENDER_LABEL }
 }
 
@@ -223,9 +261,10 @@ export function unsubscribePage(deps: MailEventDeps, token: string) {
 export async function unsubscribe(
   deps: MailEventDeps,
   token: string,
-  source: 'link' | 'one_click'
+  source: 'link' | 'one_click',
+  address = 'unknown'
 ) {
-  const claims = claimsOf(deps, token)
+  const claims = await admit(deps, token, address)
   const org = claims.organizationId
   const at = deps.clock.now().toISOString()
   const input = await deps.prospects.getEnrichmentInput(org, claims.prospectId)

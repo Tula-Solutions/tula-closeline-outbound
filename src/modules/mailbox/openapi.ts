@@ -55,7 +55,7 @@ export function failureResponses(name: MailboxRouteName) {
   for (const [status, list] of [...byStatus].sort(([a], [b]) => a - b)) {
     const description = `${list.sort().join(', ')}.`
     responses[status] =
-      status === 503 || list.includes('request.idempotency_in_progress')
+      status === 429 || status === 503 || list.includes('request.idempotency_in_progress')
         ? errorResponseWithRetryAfter(description)
         : errorResponse(description)
   }

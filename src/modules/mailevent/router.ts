@@ -1,10 +1,12 @@
 import { createRoute, type OpenAPIHono, z } from '@hono/zod-openapi'
+import type { Context } from 'hono'
 import {
   ERRORS,
   unsubscribePageSchema,
   unsubscribeParamsSchema,
   unsubscribeResultSchema,
 } from 'tula-closeline-contract'
+import { resolveClientAddress } from '~/http/client-address'
 import { domainError } from '~/http/domain-error'
 import { createRouter } from '~/http/router'
 import { PUBLIC_SECURITY } from '~/http/security'
@@ -13,6 +15,8 @@ import { contractRoute, failureResponses } from '~/modules/mailbox/openapi'
 import type { MailEventDeps } from './deps'
 import * as MailEvents from './service'
 import { verifyWebhookState } from './state'
+
+type BunServer = { requestIP?: (request: Request) => { address: string } | null }
 
 const base = { tags: ['mail'], security: [{ [PUBLIC_SECURITY]: [] }] }
 const json = <T extends z.ZodType>(description: string, schema: T) => ({
@@ -114,10 +118,22 @@ export function createMailEventRouter(deps: MailEventDeps): OpenAPIHono<AppEnv> 
     return c.body(null, 202)
   })
 
-  router.openapi(pageRoute, (c) => {
+  /** The canonical client address the rate limit counts. */
+  const addressOf = (c: Context<AppEnv>) =>
+    resolveClientAddress({
+      // Bun.serve passes its server as the Hono env; app.request in tests passes nothing.
+      socketAddress: (c.env as BunServer | undefined)?.requestIP?.(c.req.raw)?.address,
+      forwardedFor: c.req.header('x-forwarded-for'),
+      trustedProxyHops: deps.trustedProxyHops,
+    })
+
+  router.openapi(pageRoute, async (c) => {
     c.header('cache-control', 'no-store')
     c.header('referrer-policy', 'no-referrer')
-    return c.json(MailEvents.unsubscribePage(deps, c.req.valid('param').token), 200)
+    return c.json(
+      await MailEvents.unsubscribePage(deps, c.req.valid('param').token, addressOf(c)),
+      200
+    )
   })
 
   router.openapi(confirmRoute, async (c) => {
@@ -128,7 +144,10 @@ export function createMailEventRouter(deps: MailEventDeps): OpenAPIHono<AppEnv> 
     const source = form['List-Unsubscribe'] === 'One-Click' ? 'one_click' : 'link'
     c.header('cache-control', 'no-store')
     c.header('referrer-policy', 'no-referrer')
-    return c.json(await MailEvents.unsubscribe(deps, c.req.valid('param').token, source), 200)
+    return c.json(
+      await MailEvents.unsubscribe(deps, c.req.valid('param').token, source, addressOf(c)),
+      200
+    )
   })
 
   return router

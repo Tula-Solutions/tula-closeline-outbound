@@ -39,8 +39,11 @@ const EMAIL = 'buyer@example.com'
 const BODY_MARKER = 'SECRET-BODY-TEXT-9f2c'
 
 /** A Mailbox, a running Campaign and a Prospect with one message sent to them in an Enrollment. */
-async function world(organizationId: OrganizationId = newOrganizationId()) {
-  const t = await createTestApp()
+async function world(
+  organizationId: OrganizationId = newOrganizationId(),
+  env: Record<string, string> = {}
+) {
+  const t = await createTestApp({ env })
   const owner: TestIdentity = { userId: newUserId(), organizationId, role: 'owner' }
   const call = async (method: string, path: string, body?: unknown) => {
     const response = await t.app.request(path, {
@@ -382,6 +385,55 @@ describe('unsubscribe', () => {
     await MailEvents.unsubscribe(a.t.deps.inboundMail, a.token(pa.prospectId), 'link')
     expect((await a.enrollment(pa.enrollmentId))?.stopReason).toBe('unsubscribed')
     expect((await b.enrollment(pb.enrollmentId))?.state).toBe('active')
+  })
+})
+
+/** Well-formed (it reaches the service) but signed by nobody. */
+const UNUSABLE = 'u'.repeat(60)
+
+describe('unsubscribe rate limit', () => {
+  const from = (w: Awaited<ReturnType<typeof world>>, method: string, token: string, ip: string) =>
+    w.t.app.request(`/v1/public/mail/unsubscribe/${token}`, {
+      method,
+      headers: { 'x-forwarded-for': ip },
+    })
+
+  for (const method of ['GET', 'POST']) {
+    test(`${method}: an address that keeps sending unusable links gets 429 with Retry-After`, async () => {
+      const w = await world(newOrganizationId(), { TRUSTED_PROXY_HOPS: '1' })
+      const p = await w.prospect()
+      for (let i = 0; i < 20; i++) {
+        expect((await from(w, method, UNUSABLE, '203.0.113.7')).status).toBe(400)
+      }
+      const refused = await from(w, method, UNUSABLE, '203.0.113.7')
+      expect(refused.status).toBe(429)
+      expect(refused.headers.get('retry-after')).toBe('3600')
+      expect(await refused.json()).toMatchObject({ error: { code: 'rate.limited' } })
+      // Another address is untouched, and a genuine link still works from the limited one.
+      expect((await from(w, method, UNUSABLE, '203.0.113.8')).status).toBe(400)
+      expect((await from(w, method, w.token(p.prospectId), '203.0.113.7')).status).toBe(200)
+    })
+  }
+
+  test('one token is limited by its own count, not by address', async () => {
+    const w = await world(newOrganizationId(), { TRUSTED_PROXY_HOPS: '1' })
+    const p = await w.prospect()
+    const token = w.token(p.prospectId)
+    for (let i = 0; i < 30; i++) {
+      expect((await from(w, 'POST', token, `198.51.100.${i}`)).status).toBe(200)
+    }
+    const refused = await from(w, 'POST', token, '198.51.100.99')
+    expect(refused.status).toBe(429)
+    expect(refused.headers.get('retry-after')).toBe('3600')
+  })
+
+  test('X-Forwarded-For is ignored without TRUSTED_PROXY_HOPS', async () => {
+    const w = await world()
+    for (let i = 0; i < 20; i++) {
+      await from(w, 'GET', UNUSABLE, `192.0.2.${i}`)
+    }
+    // Every forged header fell into the one unknown bucket, so the next one is refused.
+    expect((await from(w, 'GET', UNUSABLE, '192.0.2.200')).status).toBe(429)
   })
 })
 

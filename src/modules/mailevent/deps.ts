@@ -6,6 +6,7 @@ import type { CoreProspects } from '~/ports/core'
 import type { CoreSuppression } from '~/ports/core-suppression'
 import type { EnrollmentStore } from '~/ports/enrollment-store'
 import type { MailEventStore } from '~/ports/mail-event-store'
+import type { RateLimiter } from '~/ports/rate-limiter'
 import type { SendStore } from '~/ports/send-store'
 
 /** The ids every message event names; only ids, never text. */
@@ -60,6 +61,10 @@ export type MailEventDeps = {
   ) => Promise<number>
   /** Checks the OIDC token on Gmail's Pub/Sub push (`Authorization` header); false refuses it. */
   verifyPush: (authorization: string | undefined) => Promise<boolean>
+  /** Limits the public unsubscribe routes by client address and by token. */
+  rateLimit: RateLimiter
+  /** Proxies in front of the service whose `X-Forwarded-For` entries are believed (0 = none). */
+  trustedProxyHops: number
   /** Carries `mail.poll`: a webhook only enqueues, the consumer reads the inbox. */
   queue: Queue<OutboundEnvelope>
   /** Publishes an event for the Organization. */
