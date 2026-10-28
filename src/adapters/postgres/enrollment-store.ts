@@ -9,7 +9,7 @@ import {
 } from 'tula-closeline-contract'
 import type { Database } from 'tula-closeline-db'
 import { outboundEnrollmentEvents, outboundEnrollments } from 'tula-closeline-db/schema'
-import type { EnrollmentStore } from '~/ports/enrollment-store'
+import type { EnrollmentStore, VariantCount } from '~/ports/enrollment-store'
 import type { InOrganization } from './store'
 
 type Row = typeof outboundEnrollments.$inferSelect
@@ -403,6 +403,32 @@ export function createPostgresEnrollmentStore(
           .orderBy(desc(t.occurredAt))
           .limit(1)
         return row?.at.toISOString() ?? null
+      }),
+
+    variantCounts: (organizationId, campaignId, stepKey) =>
+      inOrganization(organizationId, async (tx) => {
+        const result = await tx.execute(sql`
+          with sends as (
+            select e.id as enrollment_id, e.stop_reason, v.step_key, v.variant_key, v.occurred_at
+            from outbound.enrollments e
+            join outbound.enrollment_events v
+              on v.organization_id = e.organization_id and v.enrollment_id = e.id
+            where e.organization_id = ${organizationId} and e.campaign_id = ${campaignId}
+              and v.kind = 'sent' and v.variant_key is not null
+          ), latest as (
+            select distinct on (enrollment_id) enrollment_id, stop_reason, step_key, variant_key
+            from sends order by enrollment_id, occurred_at desc
+          )
+          select s.variant_key as "variantKey",
+            count(*)::int as sent,
+            (select count(*) from latest l where l.variant_key = s.variant_key and l.step_key = ${stepKey}
+              and l.stop_reason = 'replied')::int as replied,
+            (select count(*) from latest l where l.variant_key = s.variant_key and l.step_key = ${stepKey}
+              and l.stop_reason = 'hard_bounce')::int as bounced,
+            (select count(*) from latest l where l.variant_key = s.variant_key and l.step_key = ${stepKey}
+              and l.stop_reason = 'unsubscribed')::int as unsubscribed
+          from sends s where s.step_key = ${stepKey} group by s.variant_key`)
+        return result.rows as VariantCount[]
       }),
   }
 }

@@ -16,7 +16,14 @@ export type DraftSource = {
   /** The Draft for this Prospect, Campaign and Step; the same one for a repeat of the same Step. */
   obtain: (
     organizationId: OrganizationId,
-    request: { prospectId: ProspectId; campaignId: CampaignId; stepKey: string; goal: string }
+    request: {
+      prospectId: ProspectId
+      campaignId: CampaignId
+      stepKey: string
+      goal: string
+      /** The variant of the Step's test this Prospect gets: write the message with its angle. */
+      variant?: { key: string; angle: string }
+    }
   ) => Promise<OutreachDraft>
 }
 

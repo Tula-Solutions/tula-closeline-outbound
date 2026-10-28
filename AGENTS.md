@@ -64,8 +64,7 @@ and owner all; outside the view a Campaign is `campaign.not_found`. Saving a Seq
 version after graph and variant-weight checks (`campaign.invalid_sequence` names the Step); a
 running Campaign accepts it and the version applies to new Steps only. Every mutating call needs an
 `Idempotency-Key`. The Rep's membership id comes from `CoreAccess.membershipIdOf`, which is a fake
-mapping until core exposes it; the database has no column for automatic variant promotion, so only
-`promotion.mode: 'manual'` is accepted.
+mapping until core exposes it. Automatic variant promotion is accepted (see Variants).
 
 Enrollments and the audience check (`enrollment.ts`, `audience.ts`; stores `ports/enrollment-store.ts`,
 memory and Postgres). `POST .../enrollments` takes up to 100 Prospect ids into a running or paused
@@ -79,6 +78,23 @@ page carrying the running counts, so no request or job holds the whole list. `Co
 audience-check store are memory adapters only (core has no internal list route and the db no check
 table; the shortcut comments say when to upgrade), so outside `local` the service warns.
 `enrollment.stopped` is logged by id only; there is no event bus yet.
+
+## Variants (`src/modules/variant`)
+
+A Step may carry two to four weighted variants (`assign.ts`, `stats.ts`, `service.ts`, `router.ts`).
+`assignVariant` hashes `prospectId:campaignId:stepKey` (SHA-256) into the weight total, so a retry or
+restart gives the same variant and the split follows the weights; a promoted winner is used for
+everyone. The engine passes the pick to the Draft source (`request.variant`) and records it as
+`variantKey` on the `sent` entry. `GET /v1/campaigns/{id}/steps/{stepKey}/variants` returns the counts
+(a stop is credited to the variant of the Enrollment's latest variant-bearing send, only when that send
+is this Step's) with a 95% Wilson interval on the reply rate; below the minimum sample for any variant
+the status is `not_enough_data` and no rate is shown. `POST .../variants/{variantKey}/promote` (Owner or
+Admin) is idempotent by nature: the same variant answers the winner, another is `variant.already_promoted`.
+Automatic mode (`minSamplePerVariant`, `marginPercentagePoints`, stored in the db's `variants_promotion_policy`
+columns) promotes a variant that leads every other by the margin once all have the sample; it is checked on
+a read and on about 5% of sends. `variant.promoted` is only logged (ids), no event bus exists here yet.
+A promotion belongs to one Sequence version; a re-saved Sequence starts without one. The counts query is
+O(the Campaign's events) (a `shortcut:` in `service.ts`).
 
 ## Mailboxes (`src/modules/mailbox`)
 
@@ -252,6 +268,7 @@ secret box needs `MAIL_SECRET_BOX_KEY`-style configuration; unconfigured, settin
 the queue publish in batches of ten. The waterfall itself runs from the queue, off the request path.
 `LinkedinStore.reserve` (`bench/linkedin-quota.bench.test.ts`): O(1) per send, one send-key lookup
 and two counters under a per-account advisory lock (Postgres), never the Organization's size.
+`assignVariant` (`bench/variant.bench.test.ts`): O(variants), at most four, no I/O.
 `branchTarget` (`bench/engine.bench.test.ts`): O(arms) per Step, no I/O. A sweep tick is O(due rows in a
 page) per Organization, bounded to 10 Organization pages: `claimDue` reads `enrollments_due_idx` in due
 order with a limit. The 10,000-of-1,000,000 case is not measured here (the memory store scans).

@@ -16,6 +16,7 @@ import { createMailboxRouter } from '~/modules/mailbox/router'
 import { createMailEventRouter } from '~/modules/mailevent/router'
 import { createSendRouter } from '~/modules/send/router'
 import { createSignalRouter, createSignalWebhookRouter } from '~/modules/signal/router'
+import { createVariantRouter } from '~/modules/variant/router'
 import { serveOpenApi } from '~/openapi'
 
 /**
@@ -39,6 +40,7 @@ export function createApp(container: Container): OpenAPIHono<AppEnv> {
   publicRoutes.route('/', createEnrichmentRouter(container.enrichment))
   publicRoutes.route('/', createSettingsRouter(container.enrichment))
   publicRoutes.route('/', createCampaignRouter(container.campaigns))
+  publicRoutes.route('/', createVariantRouter(container.campaigns))
   publicRoutes.route('/', createBrandVoiceRouter(container.brandVoice))
   publicRoutes.route('/', createMailboxRouter(container.mailboxes))
   publicRoutes.route('/', createSignalRouter(container.signals))

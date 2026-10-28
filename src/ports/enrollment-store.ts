@@ -36,6 +36,15 @@ export type Transition =
     }
   | { state: 'completed'; at: string }
 
+/** What happened to the sends of one variant: the raw counts behind a variant's results. */
+export type VariantCount = {
+  variantKey: string
+  sent: number
+  replied: number
+  bounced: number
+  unsubscribed: number
+}
+
 /** The store of Enrollments and their logs; every call is scoped to one Organization. */
 export type EnrollmentStore = {
   /**
@@ -129,4 +138,14 @@ export type EnrollmentStore = {
     id: EnrollmentId,
     kind: EnrollmentEvent['kind']
   ) => Promise<string | null>
+  /**
+   * Per variant of an email Step: the sends, and how many of those Prospects then replied,
+   * bounced or unsubscribed (a stop is credited to the variant of the Prospect's latest send,
+   * and only when that send was this Step's). Only variants with a send appear.
+   */
+  variantCounts: (
+    organizationId: OrganizationId,
+    campaignId: CampaignId,
+    stepKey: string
+  ) => Promise<VariantCount[]>
 }

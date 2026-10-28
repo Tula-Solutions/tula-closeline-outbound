@@ -7,7 +7,7 @@ import type {
   ProspectId,
 } from 'tula-closeline-contract'
 import { formatId } from 'tula-closeline-contract'
-import type { EnrollmentStore } from '~/ports/enrollment-store'
+import type { EnrollmentStore, VariantCount } from '~/ports/enrollment-store'
 
 type Entry = { enrollment: Enrollment; events: EnrollmentEvent[] }
 
@@ -233,6 +233,42 @@ export function createMemoryEnrollmentStore(): EnrollmentStore {
         .map((e) => e.occurredAt)
         .sort()
       return times[times.length - 1] ?? null
+    },
+    async variantCounts(organizationId, campaignId, stepKey) {
+      const counts = new Map<string, VariantCount>()
+      const countOf = (variantKey: string) => {
+        let found = counts.get(variantKey)
+        if (found === undefined) {
+          found = { variantKey, sent: 0, replied: 0, bounced: 0, unsubscribed: 0 }
+          counts.set(variantKey, found)
+        }
+        return found
+      }
+      for (const { enrollment, events } of entries(organizationId).values()) {
+        if (enrollment.campaignId !== campaignId) {
+          continue
+        }
+        const sends = events.filter((e) => e.kind === 'sent' && e.variantKey !== null)
+        for (const send of sends.filter((e) => e.stepKey === stepKey)) {
+          countOf(send.variantKey as string).sent++
+        }
+        const last = sends.reduce<EnrollmentEvent | null>(
+          (latest, e) => (latest === null || e.occurredAt >= latest.occurredAt ? e : latest),
+          null
+        )
+        if (last === null || last.stepKey !== stepKey) {
+          continue
+        }
+        const row = countOf(last.variantKey as string)
+        if (enrollment.stopReason === 'replied') {
+          row.replied++
+        } else if (enrollment.stopReason === 'hard_bounce') {
+          row.bounced++
+        } else if (enrollment.stopReason === 'unsubscribed') {
+          row.unsubscribed++
+        }
+      }
+      return [...counts.values()]
     },
   }
 }

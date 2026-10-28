@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, lt, or } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNotNull, lt, or } from 'drizzle-orm'
 import {
   type Campaign,
   type CampaignId,
@@ -14,7 +14,7 @@ import {
   outboundSteps,
   outboundVariants,
 } from 'tula-closeline-db/schema'
-import type { CampaignStore } from '~/ports/campaign-store'
+import type { CampaignStore, Promotion } from '~/ports/campaign-store'
 import type { InOrganization } from './store'
 
 type CampaignRow = typeof outboundCampaigns.$inferSelect
@@ -133,22 +133,37 @@ async function writeSteps(
   await tx
     .insert(outboundSteps)
     .values(steps.map((step, position) => stepRow(scope, step, position)))
-  const variants = steps.flatMap((step) =>
-    step.kind === 'email' && step.variants !== null
-      ? step.variants.variants.map((variant, position) => ({
-          ...scope,
-          stepKey: step.key,
-          key: variant.key,
-          position,
-          label: variant.label,
-          angle: variant.angle,
-          weight: variant.weight,
-        }))
-      : []
-  )
+  const variants = steps.flatMap((step) => {
+    if (step.kind !== 'email' || step.variants === null) {
+      return []
+    }
+    const { variants: group, promotion } = step.variants
+    return group.map((variant, position) => ({
+      ...scope,
+      stepKey: step.key,
+      key: variant.key,
+      position,
+      label: variant.label,
+      angle: variant.angle,
+      weight: variant.weight,
+      promotionMinSample: promotion.mode === 'auto' ? promotion.minSamplePerVariant : null,
+      promotionMarginPoints: promotion.mode === 'auto' ? promotion.marginPercentagePoints : null,
+    }))
+  })
   if (variants.length > 0) {
     await tx.insert(outboundVariants).values(variants)
   }
+}
+
+/** The promotion settings a Step's variant rows carry (the same on each); manual when unset. */
+function promotionPolicyOf(row: VariantRow | undefined) {
+  return row?.promotionMinSample != null && row.promotionMarginPoints != null
+    ? {
+        mode: 'auto' as const,
+        minSamplePerVariant: row.promotionMinSample,
+        marginPercentagePoints: row.promotionMarginPoints,
+      }
+    : { mode: 'manual' as const }
 }
 
 /** The Step a `steps` row stands for, with the variants stored under it. */
@@ -170,8 +185,7 @@ function stepOf(row: StepRow, variantRows: readonly VariantRow[]): Step {
                   angle: variant.angle,
                   weight: variant.weight,
                 })),
-                // The database keeps no automatic-promotion settings, so a stored test is manual.
-                promotion: { mode: 'manual' },
+                promotion: promotionPolicyOf(own[0]),
               },
         next: row.nextKey,
       })
@@ -252,6 +266,37 @@ async function readVersion(
     version,
     steps,
     updatedAt: sequence.createdAt.toISOString(),
+  }
+}
+
+/** The promoted variant of a Step in one Sequence version, or null. */
+async function promotionIn(
+  tx: Transaction,
+  organizationId: string,
+  campaignId: string,
+  version: number,
+  stepKey: string
+): Promise<Promotion | null> {
+  const [row] = await tx
+    .select()
+    .from(outboundVariants)
+    .where(
+      and(
+        eq(outboundVariants.organizationId, organizationId),
+        eq(outboundVariants.campaignId, campaignId),
+        eq(outboundVariants.version, version),
+        eq(outboundVariants.stepKey, stepKey),
+        isNotNull(outboundVariants.promotedSource)
+      )
+    )
+  if (row === undefined || row.promotedSource === null || row.promotedAt === null) {
+    return null
+  }
+  return {
+    variantKey: row.key,
+    source: row.promotedSource,
+    promotedByMembershipId: row.promotedByMembershipId as Promotion['promotedByMembershipId'],
+    promotedAt: row.promotedAt.toISOString(),
   }
 }
 
@@ -388,6 +433,47 @@ export function createPostgresCampaignStore(inOrganization: InOrganization): Cam
             updatedAt: decision.campaign.updatedAt,
           },
         }
+      }),
+
+    promotionOf: (organizationId, id, version, stepKey) =>
+      inOrganization(organizationId, (tx) => promotionIn(tx, organizationId, id, version, stepKey)),
+
+    promote: (organizationId, id, version, stepKey, promotion) =>
+      inOrganization(organizationId, async (tx) => {
+        // Holding the Step row makes two promotions of one Step take turns.
+        await tx
+          .select({ key: outboundSteps.key })
+          .from(outboundSteps)
+          .where(
+            and(
+              eq(outboundSteps.organizationId, organizationId),
+              eq(outboundSteps.campaignId, id),
+              eq(outboundSteps.version, version),
+              eq(outboundSteps.key, stepKey)
+            )
+          )
+          .for('update')
+        const existing = await promotionIn(tx, organizationId, id, version, stepKey)
+        if (existing !== null) {
+          return { promotion: existing, created: false }
+        }
+        await tx
+          .update(outboundVariants)
+          .set({
+            promotedSource: promotion.source,
+            promotedByMembershipId: promotion.promotedByMembershipId,
+            promotedAt: new Date(promotion.promotedAt),
+          })
+          .where(
+            and(
+              eq(outboundVariants.organizationId, organizationId),
+              eq(outboundVariants.campaignId, id),
+              eq(outboundVariants.version, version),
+              eq(outboundVariants.stepKey, stepKey),
+              eq(outboundVariants.key, promotion.variantKey)
+            )
+          )
+        return { promotion, created: true }
       }),
   }
 }

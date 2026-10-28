@@ -10,10 +10,13 @@ import {
   type ProspectId,
   type Sequence,
   type Step,
+  type VariantGroup,
 } from 'tula-closeline-contract'
 import type { Handlers } from 'tula-closeline-kit/queue'
 import { type OutboundEnvelope, registry } from '~/messages'
 import { isOpen, nextOpen } from '~/modules/send/window'
+import { assignVariant } from '~/modules/variant/assign'
+import { measureStep } from '~/modules/variant/service'
 import type { ApprovalReason } from '~/ports/engine'
 import type { Transition } from '~/ports/enrollment-store'
 import { send } from '../send/service'
@@ -37,6 +40,8 @@ export const APPROVAL_RECHECK_MS = 24 * HOUR_MS
 const MAX_ORG_PAGES = 10
 const PUBLISH_CHUNK = 10
 const MAILBOX_PAGE = 20
+/** The share of sends after which an automatic test looks for a winner. */
+const AUTO_PROMOTE_SAMPLE = 0.05
 
 type StopReason = NonNullable<Enrollment['stopReason']>
 type StepMessage = Extract<OutboundEnvelope, { type: 'enrollment.step' }>['payload']
@@ -233,6 +238,51 @@ async function stop(run: Run, reason: StopReason) {
   }
 }
 
+/** The variant of the Step's test this Prospect gets: the winner if one is promoted, else the hash's pick. */
+async function variantOf(run: Run, group: VariantGroup, stepKey: string) {
+  const { deps, organizationId, campaign, enrollment } = run
+  const promotion = await deps.campaigns.promotionOf(
+    organizationId,
+    campaign.id,
+    campaign.sequenceVersion,
+    stepKey
+  )
+  return assignVariant(
+    { prospectId: enrollment.prospectId, campaignId: campaign.id, stepKey },
+    group.variants,
+    promotion?.variantKey ?? null
+  )
+}
+
+/**
+ * Looks at the Step's results so a clear winner is promoted (automatic mode only).
+ * shortcut: checked on a sample of sends, not each, because the counts scan the Campaign's log;
+ * a promotion can lag by a few dozen sends, and a read of the results also promotes.
+ */
+async function settleTest(run: Run, group: VariantGroup, stepKey: string) {
+  const { deps, organizationId, campaign } = run
+  try {
+    await measureStep(
+      {
+        store: deps.campaigns,
+        enrollments: deps.enrollments,
+        clock: deps.clock,
+        logger: deps.logger,
+      },
+      organizationId,
+      campaign,
+      stepKey,
+      group
+    )
+  } catch (error) {
+    // The send is done; a failed look for a winner must not fail the Step.
+    deps.logger.warn('variant check failed', {
+      enrollmentId: run.enrollment.id,
+      code: codeOf(error),
+    })
+  }
+}
+
 async function runEmail(run: Run, step: Extract<Step, { kind: 'email' }>) {
   const { deps, organizationId, enrollment, campaign, now } = run
   const at = now.toISOString()
@@ -268,11 +318,13 @@ async function runEmail(run: Run, step: Extract<Step, { kind: 'email' }>) {
   if (refusal !== null) {
     return stop(run, refusal)
   }
+  const variant = step.variants === null ? null : await variantOf(run, step.variants, stepKey)
   const draft = await deps.drafts.obtain(organizationId, {
     prospectId: enrollment.prospectId,
     campaignId: campaign.id,
     stepKey,
     goal: step.goal,
+    ...(variant === null ? {} : { variant: { key: variant.key, angle: variant.angle } }),
   })
   const reasons: ApprovalReason[] = []
   if (draft.ungrounded) {
@@ -344,8 +396,15 @@ async function runEmail(run: Run, step: Extract<Step, { kind: 'email' }>) {
   switch (decision.state) {
     case 'sent': {
       await moveTo(run, step.next, now.getTime(), [
-        eventOf(enrollment.id, 'sent', at, { stepKey, sendId: decision.id }),
+        eventOf(enrollment.id, 'sent', at, {
+          stepKey,
+          sendId: decision.id,
+          variantKey: variant?.key ?? null,
+        }),
       ])
+      if (step.variants?.promotion.mode === 'auto' && deps.random() < AUTO_PROMOTE_SAMPLE) {
+        await settleTest(run, step.variants, stepKey)
+      }
       return
     }
     case 'deferred': {

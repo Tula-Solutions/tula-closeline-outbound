@@ -4,6 +4,7 @@ import {
   type CampaignId,
   type Enrollment,
   type EnrollmentEvent,
+  type EnrollmentStopReason,
   formatId,
   type MembershipId,
   type OrganizationId,
@@ -247,5 +248,40 @@ describe('the Postgres Enrollment store', () => {
       after = page.next
     } while (after !== null)
     expect(seen).toContain(org)
+  })
+
+  test('variantCounts counts sends per variant and credits a stop to the last variant sent', async () => {
+    const org = newOrganizationId()
+    const other = newOrganizationId()
+    const campaignId = await seedCampaign(org)
+    const seed = async (variantKey: string | null, stop: EnrollmentStopReason | null) => {
+      const r = row(campaignId, AT)
+      const sent: EnrollmentEvent = {
+        ...(r.events[0] as EnrollmentEvent),
+        id: formatId('eev', crypto.randomUUID()),
+        kind: 'sent',
+        stepKey: 'intro',
+        variantKey,
+      }
+      await store.insertIfAbsent(org, r.enrollment, [...r.events, sent])
+      if (stop !== null) {
+        await store.stop(org, r.enrollment.id, stop, AT, null)
+      }
+    }
+    await seed('a', null)
+    await seed('a', 'replied')
+    await seed('a', 'hard_bounce')
+    await seed('b', 'replied')
+    await seed('b', 'unsubscribed')
+    await seed('b', 'removed_by_rep')
+    await seed(null, 'replied')
+    const byKey = (counts: Awaited<ReturnType<typeof store.variantCounts>>) =>
+      Object.fromEntries(counts.map((c) => [c.variantKey, c]))
+    const counts = byKey(await store.variantCounts(org, campaignId, 'intro'))
+    expect(counts.a).toMatchObject({ sent: 3, replied: 1, bounced: 1, unsubscribed: 0 })
+    expect(counts.b).toMatchObject({ sent: 3, replied: 1, bounced: 0, unsubscribed: 1 })
+    expect(Object.keys(counts).sort()).toEqual(['a', 'b'])
+    expect(await store.variantCounts(org, campaignId, 'other-step')).toEqual([])
+    expect(await store.variantCounts(other, campaignId, 'intro')).toEqual([])
   })
 })

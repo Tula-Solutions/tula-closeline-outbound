@@ -19,6 +19,8 @@ export type CampaignRouteName =
   | 'getEnrollment'
   | 'listEnrollmentActivity'
   | 'removeEnrollment'
+  | 'getVariantResults'
+  | 'promoteVariant'
 
 const ALL_ERRORS: Record<string, { code: string; status: number }> = {
   ...ERRORS,
