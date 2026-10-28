@@ -132,6 +132,19 @@ empty or oversized value, an unknown field or a banned phrase that is also prefe
 `voice.invalid`. A repeat of the last save answers that version. The contract and database have no
 default-language field, so there is none yet.
 
+## Signals and fit (`src/modules/signal`, `src/modules/fit`)
+
+- A Signal is untrusted data: shown to the Rep and to the research brief, never obeyed, never
+  logged. `Signals.ingest` is the one write path (provider adapters, notes, the webhook).
+- Fresh means `expiresAt > now`; the default window is 30 days (`DEFAULT_FRESHNESS_DAYS`).
+  `Signals.listFresh` is what the research brief reads. A kind switched off in the Organization's
+  settings is refused with `signal.invalid`.
+- The webhook (`POST /v1/public/signals/webhook/{organizationId}`) is signed over the raw body (HMAC,
+  constant-time compare, timestamp window), so it reads the body itself, is mounted before token
+  authentication, and its body is not declared in OpenAPI. The secret is sealed with the secret box and rotated by `rotate` (no replay store).
+- Fit is scored lazily on `getProspectFit` and stored; a change emits `prospect.fit_changed`.
+  Criteria edits do not rescore in the background, so `listFitScores` can be stale until read.
+- `findProspectIdByEmail` is not served by core's HTTP yet (the adapter returns null).
 ## Send
 
 `modules/send/service.ts` `send(deps, org, request)` decides and sends one email. The request

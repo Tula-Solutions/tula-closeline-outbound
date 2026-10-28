@@ -2,7 +2,9 @@ import { describe, expect, test } from 'bun:test'
 import { formatId } from 'tula-closeline-contract'
 import { MAX_SECRET_KEY_ID_LENGTH, type SecretBox, type SecretContext } from './secret-box'
 
-const context = (purpose: SecretContext['purpose'] = 'access_token'): SecretContext => ({
+type MailboxContext = Extract<SecretContext, { mailboxId: unknown }>
+
+const context = (purpose: MailboxContext['purpose'] = 'access_token'): MailboxContext => ({
   organizationId: formatId('org', crypto.randomUUID()),
   mailboxId: formatId('mbx', crypto.randomUUID()),
   purpose,
@@ -44,6 +46,26 @@ export function describeSecretBox(label: string, make: () => SecretBox): void {
       ).rejects.toThrow()
       await expect(
         box.open(sealed, { ...where, organizationId: formatId('org', crypto.randomUUID()) })
+      ).rejects.toThrow()
+    })
+
+    test('a webhook secret opens only for its Organization and purpose', async () => {
+      const box = make()
+      const where: SecretContext = {
+        organizationId: formatId('org', crypto.randomUUID()),
+        purpose: 'signal_webhook_secret',
+      }
+      const sealed = await box.seal('whsec', where)
+      expect(await box.open(sealed, where)).toBe('whsec')
+      await expect(
+        box.open(sealed, { ...where, organizationId: formatId('org', crypto.randomUUID()) })
+      ).rejects.toThrow()
+      await expect(
+        box.open(sealed, {
+          ...where,
+          mailboxId: formatId('mbx', crypto.randomUUID()),
+          purpose: 'access_token',
+        })
       ).rejects.toThrow()
     })
 
