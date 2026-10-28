@@ -155,6 +155,16 @@ const schema = z
     ENRICHMENT_PROVIDER_MAX_TRIES: integer(1, 5).default(2),
     /** The first retry delay before jitter, in ms; it doubles per try. */
     ENRICHMENT_RETRY_BASE_MS: integer(1, 60_000).default(200),
+    /** The longest a Research Brief waits for the web search, in ms. */
+    RESEARCH_WEB_DEADLINE_MS: integer(10, 60_000).default(8_000),
+    /** The longest one model call for a Research Brief may take, in ms. */
+    RESEARCH_MODEL_TIMEOUT_MS: integer(10, 120_000).default(20_000),
+    /** The most times the model is asked for one Research Brief (the first try included). */
+    RESEARCH_MODEL_MAX_TRIES: integer(1, 5).default(2),
+    /** The first model retry delay before jitter, in ms; it doubles per try. */
+    RESEARCH_RETRY_BASE_MS: integer(1, 60_000).default(200),
+    /** How long a Research Brief stays reusable for an unchanged Prospect, in seconds. */
+    RESEARCH_BRIEF_TTL_SECONDS: integer(60, 2_592_000).default(259_200),
     /** How long a run stays claimed by one worker before another may take it over, in seconds. */
     ENRICHMENT_RUN_LEASE_SECONDS: integer(5, 3_600).default(120),
     /** Apollo's API origin (person and company data); a Fake in tests and local runs. */

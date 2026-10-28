@@ -25,10 +25,14 @@ import { createGmailMailTransport } from '~/adapters/gmail/mail-transport'
 import { createGraphMailTransport } from '~/adapters/graph/mail-transport'
 import { createHttpCoreProspects } from '~/adapters/http/core'
 import { createMemoryAudienceCheckStore } from '~/adapters/memory/audience-check-store'
+import { createMemoryBriefStore } from '~/adapters/memory/brief-store'
 import { createMemoryCore } from '~/adapters/memory/core'
 import { createMemoryLinkedInProvider } from '~/adapters/memory/linkedin-provider'
 import { createMemoryMailTransport } from '~/adapters/memory/mail-transport'
+import { createMemoryModel } from '~/adapters/memory/model'
+import { createMemoryPlaybookSearch } from '~/adapters/memory/playbook-search'
 import { createMemorySecretBox } from '~/adapters/memory/secret-box'
+import { createMemoryWebSearch } from '~/adapters/memory/web-search'
 import { createPostgresBrandVoiceStore } from '~/adapters/postgres/brand-voice-store'
 import { createPostgresCampaignStore } from '~/adapters/postgres/campaign-store'
 import { createPostgresEnrollmentStore } from '~/adapters/postgres/enrollment-store'
@@ -55,6 +59,7 @@ import { enrichmentHandlers } from '~/modules/enrichment/handlers'
 import type { FitDeps } from '~/modules/fit/deps'
 import type { LinkedinDeps } from '~/modules/linkedin/deps'
 import type { MailboxDeps } from '~/modules/mailbox/deps'
+import { type ResearchDeps, researchLimits } from '~/modules/research/deps'
 import type { SendDeps } from '~/modules/send/deps'
 import type { SignalDeps } from '~/modules/signal/deps'
 import { trackerSafe } from '~/tracker-safe'
@@ -102,6 +107,8 @@ export type Container = {
   mailboxes: MailboxDeps
   /** Everything the signal module needs; its service functions take this first. */
   signals: SignalDeps
+  /** Everything the research module needs. */
+  research: ResearchDeps
   /** Everything the fit module needs; its service functions take this first. */
   fit: FitDeps
   /** Everything the send pipeline needs. */
@@ -296,6 +303,23 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     clock: systemClock,
     events: signalEvents,
   }
+  const local = env.ENVIRONMENT === 'local'
+  // shortcut: the model and web search are memory stand-ins (no vendor chosen, #290), so outside
+  // `local` there is no model and briefs answer draft.model_unavailable; the store is in process memory.
+  const research: ResearchDeps = {
+    store: createMemoryBriefStore(),
+    core: prospectsCore,
+    access: core.access,
+    signals,
+    model: local ? createMemoryModel() : null,
+    web: local ? createMemoryWebSearch() : null,
+    playbook: local ? createMemoryPlaybookSearch() : null,
+    clock: systemClock,
+    sleep: systemSleep,
+    random: Math.random,
+    logger,
+    limits: researchLimits(env),
+  }
   const fit: FitDeps = {
     store: createPostgresFitStore(inOrganization),
     core: prospectsCore,
@@ -406,6 +430,7 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     brandVoice,
     mailboxes,
     signals,
+    research,
     fit,
     send,
     linkedin,

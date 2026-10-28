@@ -13,6 +13,7 @@ import { createFitRouter } from '~/modules/fit/router'
 import { createHealthRouter } from '~/modules/health/router'
 import { createLinkedinRouter } from '~/modules/linkedin/router'
 import { createMailboxRouter } from '~/modules/mailbox/router'
+import { createResearchRouter } from '~/modules/research/router'
 import { createSendRouter } from '~/modules/send/router'
 import { createSignalRouter, createSignalWebhookRouter } from '~/modules/signal/router'
 import { serveOpenApi } from '~/openapi'
@@ -42,6 +43,7 @@ export function createApp(container: Container): OpenAPIHono<AppEnv> {
   publicRoutes.route('/', createFitRouter(container.fit))
   publicRoutes.route('/', createSendRouter(container.send))
   publicRoutes.route('/', createLinkedinRouter(container.linkedin))
+  publicRoutes.route('/', createResearchRouter(container.research))
   app.route('/', publicRoutes)
 
   serveOpenApi(app)

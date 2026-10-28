@@ -26,6 +26,7 @@ import {
 import { createSecretBoxVault } from '~/adapters/crypto/vault'
 import { createMemoryAudienceCheckStore } from '~/adapters/memory/audience-check-store'
 import { createMemoryBrandVoiceStore } from '~/adapters/memory/brand-voice-store'
+import { createMemoryBriefStore } from '~/adapters/memory/brief-store'
 import { createMemoryCampaignStore } from '~/adapters/memory/campaign-store'
 import { createMemoryCore, type MemoryCore } from '~/adapters/memory/core'
 import { createMemoryEnrollmentStore } from '~/adapters/memory/enrollment-store'
@@ -43,12 +44,18 @@ import {
   type MemoryMailTransport,
 } from '~/adapters/memory/mail-transport'
 import { createMemoryMailboxStore } from '~/adapters/memory/mailbox-store'
+import { createMemoryModel, type MemoryModel } from '~/adapters/memory/model'
+import {
+  createMemoryPlaybookSearch,
+  type MemoryPlaybookSearch,
+} from '~/adapters/memory/playbook-search'
 import { createMemoryProviderConfig } from '~/adapters/memory/provider-config'
 import type { MemoryProvider, MemoryVerifier } from '~/adapters/memory/providers'
 import { createMemorySecretBox } from '~/adapters/memory/secret-box'
 import { createMemorySendStore } from '~/adapters/memory/send-store'
 import { createMemorySignalStore } from '~/adapters/memory/signal-store'
 import { createMemoryEnrichmentStore } from '~/adapters/memory/store'
+import { createMemoryWebSearch, type MemoryWebSearch } from '~/adapters/memory/web-search'
 import { createApp } from '~/app'
 import { createOutboundConsumer } from '~/consumer'
 import type { Container, ErrorContext, ReadinessCheck } from '~/container'
@@ -60,6 +67,7 @@ import { campaignHandlers } from '~/modules/campaign/audience'
 import { enrichmentHandlers } from '~/modules/enrichment/handlers'
 import type { LinkedinChannelDisabled } from '~/modules/linkedin/deps'
 import type { MailboxStateChanged } from '~/modules/mailbox/deps'
+import { researchLimits } from '~/modules/research/deps'
 import type { SignalDeps, SignalEvent } from '~/modules/signal/deps'
 
 /** The issuer and audience the test environment's tokens carry. */
@@ -90,6 +98,10 @@ export type TestDeps = Container & {
   linkedinProvider: MemoryLinkedInProvider
   /** The LinkedIn store in memory, to set the channel's state. */
   linkedinStore: MemoryLinkedinStore
+  /** The research model, web search and Playbook search in memory: script answers and read requests. */
+  researchModel: MemoryModel
+  researchWeb: MemoryWebSearch
+  researchPlaybook: MemoryPlaybookSearch
   /** Every `mailbox.state_changed` published, in order. */
   mailEvents: { organizationId: string; event: MailboxStateChanged }[]
   /** Every `signal.recorded` and `prospect.fit_changed` published, in order. */
@@ -194,6 +206,9 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     logger,
   }
 
+  const researchModel = createMemoryModel()
+  const researchWeb = createMemoryWebSearch()
+  const researchPlaybook = createMemoryPlaybookSearch()
   const brandVoice: Container['brandVoice'] = {
     store: createMemoryBrandVoiceStore(),
     access: core.access,
@@ -283,6 +298,23 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     brandVoice,
     mailboxes,
     signals,
+    research: {
+      store: createMemoryBriefStore(),
+      core: core.prospects,
+      access: core.access,
+      signals,
+      model: researchModel,
+      web: researchWeb,
+      playbook: researchPlaybook,
+      clock: time.clock,
+      sleep: time.sleep,
+      random: () => 0.5,
+      logger,
+      limits: researchLimits(env),
+    },
+    researchModel,
+    researchWeb,
+    researchPlaybook,
     fit,
     signalEvents,
     send,

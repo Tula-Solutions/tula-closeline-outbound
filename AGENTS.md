@@ -54,7 +54,9 @@ outside `local`; the adapter is `src/adapters/http/core.ts`), `CORE_CALL_TIMEOUT
 `MAIL_OAUTH_REDIRECT_URI`, `MAIL_STATE_SECRET` (required outside `local`), `MAIL_SECRET_BOX_KEY`
 (a local-only key, refused in staging and prod), `MAIL_CALL_TIMEOUT_MS`, `MAIL_CALL_MAX_TRIES`,
 `MAIL_RETRY_BASE_MS`, and for enrichment vendors `APOLLO_BASE_URL`, `ZEROBOUNCE_BASE_URL`,
-`PROVIDER_CIRCUIT_FAILURES`, `PROVIDER_CIRCUIT_OPEN_MS`. Add a key in both files.
+`PROVIDER_CIRCUIT_FAILURES`, `PROVIDER_CIRCUIT_OPEN_MS`, and for Research Briefs
+`RESEARCH_WEB_DEADLINE_MS`, `RESEARCH_MODEL_TIMEOUT_MS`, `RESEARCH_MODEL_MAX_TRIES`,
+`RESEARCH_RETRY_BASE_MS`, `RESEARCH_BRIEF_TTL_SECONDS`. Add a key in both files.
 
 ## Campaigns (`src/modules/campaign`)
 
@@ -131,6 +133,20 @@ Draft names the exact version it used. The body is checked by the service, not t
 empty or oversized value, an unknown field or a banned phrase that is also preferred answers
 `voice.invalid`. A repeat of the last save answers that version. The contract and database have no
 default-language field, so there is none yet.
+
+## Research Briefs (`src/modules/research`)
+
+`POST /v1/prospects/{prospectId}/briefs` builds a Brief from the Prospect's fields, fresh Signals, a
+bounded web search (at most 10 pages, `RESEARCH_WEB_DEADLINE_MS`) and the Organization's Playbook
+search. The model gets fixed instructions and the material as numbered sources (`s1`...) in a
+separate data channel; a statement whose `sourceId` is not one of them, or that fails the contract's
+schema, is dropped and counted in `droppedCount`. A web timeout answers `research.timeout` with
+`details.sources` (the pages that had arrived, marked `partial`) and keeps nothing. A Brief is reused
+(200) while the Prospect's values and fresh Signal ids are unchanged and it has not expired;
+`refresh: true` builds a new one (201). Ports: `Model`, `WebSearch`, `PlaybookSearch`, `BriefStore`,
+all with memory adapters only (the vendor is undecided, #290): outside `local` the model is null and
+a Brief answers `draft.model_unavailable`. The store is in process memory (core serves no Prospect
+update time to key a Postgres cache on); logs carry ids and counts only.
 
 ## Signals and fit (`src/modules/signal`, `src/modules/fit`)
 
