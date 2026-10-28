@@ -80,6 +80,19 @@ functions the send path uses; sending is never retried after an unknown outcome.
 own Mailboxes, a Manager their Team's, an Owner or Admin all; shared Mailboxes are Owner/Admin only.
 A live Gmail test runs only when `GMAIL_LIVE_REFRESH_TOKEN` is set.
 
+## Brand voice (`src/modules/brand-voice`)
+
+The Organization's Brand Voice (`/v1/brand-voice`): `GET` the current one (any role,
+`voice.not_found` before the first save), `PUT` to save a new version (Owner and Admin, needs an
+`Idempotency-Key`), `GET /versions` for the history, newest first (Owner and Admin, as the contract
+says). Store port `ports/brand-voice-store.ts` (memory and Postgres); a save runs under a per-
+Organization advisory lock, so `expectedVersion` decides and the loser gets `voice.version_conflict`.
+Every version keeps its own id (derived from Organization and version) and stays readable, since a
+Draft names the exact version it used. The body is checked by the service, not the router, so an
+empty or oversized value, an unknown field or a banned phrase that is also preferred answers
+`voice.invalid`. A repeat of the last save answers that version. The contract and database have no
+default-language field, so there is none yet.
+
 ## Hot paths
 
 `POST /v1/enrichment-runs` (`bench/enrichment.bench.test.ts`): O(k) in the Prospects named (at most

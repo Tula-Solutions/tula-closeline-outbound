@@ -24,6 +24,7 @@ import { createHttpCoreProspects } from '~/adapters/http/core'
 import { createMemoryCore } from '~/adapters/memory/core'
 import { createMemoryMailTransport } from '~/adapters/memory/mail-transport'
 import { createMemorySecretBox } from '~/adapters/memory/secret-box'
+import { createPostgresBrandVoiceStore } from '~/adapters/postgres/brand-voice-store'
 import { createPostgresCampaignStore } from '~/adapters/postgres/campaign-store'
 import { createPostgresMailboxStore } from '~/adapters/postgres/mailbox-store'
 import { createPostgresProviderConfig } from '~/adapters/postgres/provider-config'
@@ -33,6 +34,7 @@ import { describeError } from '~/describe-error'
 import { type Env, loadEnv } from '~/env'
 import { SERVICE } from '~/info'
 import { type OutboundEnvelope, registry } from '~/messages'
+import type { BrandVoiceDeps } from '~/modules/brand-voice/deps'
 import type { CampaignDeps } from '~/modules/campaign/deps'
 import type { EnrichmentDeps } from '~/modules/enrichment/deps'
 import { enrichmentHandlers } from '~/modules/enrichment/handlers'
@@ -77,6 +79,8 @@ export type Container = {
   enrichment: EnrichmentDeps
   /** Everything the campaign module needs; its service functions take this first. */
   campaigns: CampaignDeps
+  /** Everything the brand-voice module needs. */
+  brandVoice: BrandVoiceDeps
   /** Everything the mailbox module needs; its service functions take this first. */
   mailboxes: MailboxDeps
   /** The queue consumer; built here, started by `server.ts` and stopped on shutdown. */
@@ -221,6 +225,11 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     access: core.access,
     clock: systemClock,
   }
+  const brandVoice: BrandVoiceDeps = {
+    store: createPostgresBrandVoiceStore(inOrganization),
+    access: core.access,
+    clock: systemClock,
+  }
   const mailboxes: MailboxDeps = {
     store: createPostgresMailboxStore(inOrganization),
     access: core.access,
@@ -284,6 +293,7 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     processed,
     enrichment,
     campaigns,
+    brandVoice,
     mailboxes,
     consumer,
     readinessChecks: [
