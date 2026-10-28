@@ -118,6 +118,18 @@ Microsoft yet.
   (anything but `ENVIRONMENT=local`) start answers `server.unavailable`.
 - `completeConnection` (service) records a finished hosted login; no route calls it until the
   provider webhook ticket. The provider's account reference is stored and never returned or logged.
+- `PATCH /v1/linkedin/accounts/{accountId}/limits` (Owner and Admin) lowers an account's limits;
+  above the contract ceiling is `linkedin.limit_above_ceiling`.
+- `sendJob` (`send.ts`) is the guard and pacing for one connection request or message, called by a
+  later sequence runner (there is no LinkedIn Step kind yet): channel, connected account, Contact
+  Check (`consent.suppressed` gives `skipped`/`suppressed`, anything else `no_consent`), a UTC send
+  window and a minimum gap, then `store.reserve` of the day and week quota. Over a limit is
+  `deferred` with `retryAt`, never dropped. The send key makes a retried job send once
+  (`duplicate`); the ledger is `outbound.linkedin_sends`. The provider call has a timeout and
+  bounded jittered retries on `unavailable` only; a timeout or `unknown` outcome keeps the
+  reservation and is never resent (`unknown`). `restricted`, `checkpoint` and `rate_limited` pause
+  that account only (`store.pause` is conditional, so one `linkedin.account_paused` per pause);
+  the container only logs it until there is an event bus.
 
 ## Brand voice (`src/modules/brand-voice`)
 
@@ -155,6 +167,8 @@ secret box needs `MAIL_SECRET_BOX_KEY`-style configuration; unconfigured, settin
 `POST /v1/enrichment-runs` (`bench/enrichment.bench.test.ts`): O(k) in the Prospects named (at most
 500), never in the Organization's size. One visibility check, one idempotency lookup, one insert and
 the queue publish in batches of ten. The waterfall itself runs from the queue, off the request path.
+`LinkedinStore.reserve` (`bench/linkedin-quota.bench.test.ts`): O(1) per send, one send-key lookup
+and two counters under a per-account advisory lock (Postgres), never the Organization's size.
 The per-request middleware stack (`createBaseApp`) and `/healthz` keep the budgets in `bench/`.
 
 A benchmark times `measure(operation)`: a warm-up, then several batches, gated on the fastest, so a

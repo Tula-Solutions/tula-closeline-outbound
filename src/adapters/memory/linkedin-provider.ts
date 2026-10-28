@@ -3,6 +3,8 @@ import {
   type LinkedInProvider,
   LinkedInProviderError,
   type ProviderAccountStatus,
+  type ProviderSend,
+  type SendOutcome,
 } from '~/ports/linkedin-provider'
 
 const LOGIN_TTL_MS = 600_000
@@ -17,6 +19,12 @@ export type MemoryLinkedInProvider = LinkedInProvider & {
   setDown: (down: boolean) => void
   /** The references removed at the provider, in order. */
   removed: () => readonly string[]
+  /** Queues what the next sends answer or throw (an outcome, or a failure reason), one per call. */
+  script: (...next: (SendOutcome | 'unavailable' | 'unknown' | 'rejected')[]) => void
+  /** The sends that went through, once per idempotency key. */
+  delivered: () => readonly ProviderSend[]
+  /** How many `send` calls were made, retries included. */
+  sendCalls: () => number
 }
 
 /** An in-process {@link LinkedInProvider} for tests; scripts what the real one would answer. */
@@ -25,6 +33,10 @@ export function createMemoryLinkedInProvider(clock: Clock): MemoryLinkedInProvid
   const byUrl = new Map<string, string>()
   const statuses = new Map<string, ProviderAccountStatus>()
   const removed: string[] = []
+  const scripted: (SendOutcome | 'unavailable' | 'unknown' | 'rejected')[] = []
+  const delivered = new Map<string, ProviderSend>()
+  const answers = new Map<string, SendOutcome>()
+  let calls = 0
   let down = false
   const guard = () => {
     if (down) {
@@ -60,6 +72,28 @@ export function createMemoryLinkedInProvider(clock: Clock): MemoryLinkedInProvid
       statuses.set(accountRef, 'disconnected')
       removed.push(accountRef)
     },
+
+    async send(input) {
+      calls++
+      guard()
+      const earlier = answers.get(input.idempotencyKey)
+      if (earlier !== undefined) {
+        return earlier
+      }
+      const next = scripted.shift() ?? 'sent'
+      if (next === 'unavailable' || next === 'unknown' || next === 'rejected') {
+        throw new LinkedInProviderError(next)
+      }
+      answers.set(input.idempotencyKey, next)
+      if (next === 'sent') {
+        delivered.set(input.idempotencyKey, input)
+      }
+      return next
+    },
+
+    script: (...next) => void scripted.push(...next),
+    delivered: () => [...delivered.values()],
+    sendCalls: () => calls,
 
     completeLogin(hostedLoginUrl) {
       const ref = byUrl.get(hostedLoginUrl)

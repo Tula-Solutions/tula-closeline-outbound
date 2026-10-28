@@ -3,6 +3,8 @@ import type { MiddlewareHandler } from 'hono'
 import {
   acceptLinkedinRiskRequestSchema,
   ERRORS,
+  LINKEDIN_ERRORS,
+  LINKEDIN_LIMIT_ISSUE_MESSAGE,
   linkedinAccountIdSchema,
   linkedinAccountPageSchema,
   linkedinAccountSchema,
@@ -14,6 +16,7 @@ import {
   listLinkedinRiskAcceptancesQuerySchema,
   startLinkedinConnectionRequestSchema,
   startLinkedinConnectionResponseSchema,
+  updateLinkedinAccountLimitsRequestSchema,
   updateLinkedinSettingsRequestSchema,
 } from 'tula-closeline-contract'
 import { z } from 'zod'
@@ -189,6 +192,28 @@ const settingsRoute = createRoute({
   },
 })
 
+const updateLimitsRoute = createRoute({
+  ...contractRoute('updateAccountLimits'),
+  middleware: requireRoles('updateAccountLimits'),
+  tags: ['linkedin'],
+  summary: "Lower or raise one account's send limits, up to the ceiling",
+  security: [{ [PUBLIC_SECURITY]: [] }],
+  request: {
+    params: accountParamsSchema,
+    body: {
+      required: true,
+      content: { 'application/json': { schema: updateLinkedinAccountLimitsRequestSchema } },
+    },
+  },
+  responses: {
+    200: {
+      description: 'The account with its new limits.',
+      content: { 'application/json': { schema: linkedinAccountSchema } },
+    },
+    ...failureResponses('updateAccountLimits'),
+  },
+})
+
 const updateSettingsRoute = createRoute({
   ...contractRoute('updateSettings'),
   middleware: requireRoles('updateSettings'),
@@ -248,6 +273,28 @@ export function createLinkedinRouter(deps: LinkedinDeps): OpenAPIHono<AuthedEnv>
   )
   router.openapi(updateSettingsRoute, async (c) =>
     c.json(await Linkedin.updateSettings(deps, callerOf(c), c.req.valid('json').enabled), 200)
+  )
+  router.openapi(
+    updateLimitsRoute,
+    async (c) =>
+      c.json(
+        await Linkedin.updateLimits(
+          deps,
+          callerOf(c),
+          c.req.valid('param').accountId,
+          c.req.valid('json')
+        ),
+        200
+      ),
+    (result, c) => {
+      if (!result.success) {
+        // The contract marks a limit above the ceiling with this message; it has its own code.
+        if (result.error.issues.some((issue) => issue.message === LINKEDIN_LIMIT_ISSUE_MESSAGE)) {
+          throw domainError(LINKEDIN_ERRORS['linkedin.limit_above_ceiling'])
+        }
+        return router.defaultHook?.(result, c)
+      }
+    }
   )
   return router
 }

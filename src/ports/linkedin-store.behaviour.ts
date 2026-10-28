@@ -178,5 +178,172 @@ export function describeLinkedinStore(label: string, make: () => LinkedinStoreHa
       expect((await store.channelState(a, LINKEDIN_RISK_WORDING_VERSION)).enabled).toBe(false)
       expect((await store.channelState(org(), LINKEDIN_RISK_WORDING_VERSION)).enabled).toBe(false)
     })
+    describe('quota', () => {
+      const at = '2026-03-10T10:00:00.000Z'
+      const day = '2026-03-10'
+      const weekStart = '2026-03-09'
+      const reserve = (
+        store: LinkedinStore,
+        organizationId: OrganizationId,
+        accountId: LinkedinAccountId,
+        sendKey: string,
+        kind: 'connection' | 'message' = 'connection'
+      ) => store.reserve(organizationId, { accountId, sendKey, kind, day, weekStart, at })
+
+      test('parallel reserves never exceed the daily limit', async () => {
+        const { store } = make()
+        const a = org()
+        const account = await store.connect(a, newLinkedinRecord())
+        const results = await Promise.all(
+          Array.from({ length: 30 }, (_, i) => reserve(store, a, account.id, `k${i}`))
+        )
+        expect(results.filter((r) => r.status === 'reserved').length).toBe(20)
+        expect(results.filter((r) => r.status === 'over_limit').length).toBe(10)
+        expect((await store.usageOf(a, account.id, day, weekStart)).connections).toBe(20)
+      })
+
+      test('the same key counts once and answers duplicate', async () => {
+        const { store } = make()
+        const a = org()
+        const account = await store.connect(a, newLinkedinRecord())
+        expect(await reserve(store, a, account.id, 'same')).toEqual({ status: 'reserved' })
+        expect(await reserve(store, a, account.id, 'same')).toEqual({
+          status: 'duplicate',
+          state: 'sending',
+        })
+        await store.markSent(a, 'same', at)
+        expect(await reserve(store, a, account.id, 'same')).toEqual({
+          status: 'duplicate',
+          state: 'sent',
+        })
+        expect((await store.usageOf(a, account.id, day, weekStart)).connections).toBe(1)
+      })
+
+      test('an over-limit reserve leaves no record behind', async () => {
+        const { store } = make()
+        const a = org()
+        const account = await store.connect(
+          a,
+          newLinkedinRecord({
+            limits: { dailyConnections: 1, dailyMessages: 1, weeklyConnections: 5 },
+          })
+        )
+        await reserve(store, a, account.id, 'one')
+        expect(await reserve(store, a, account.id, 'two')).toEqual({
+          status: 'over_limit',
+          limit: 'daily',
+        })
+        await store.release(a, 'one')
+        expect(await reserve(store, a, account.id, 'two')).toEqual({ status: 'reserved' })
+      })
+
+      test('the weekly limit counts the days since Monday; messages ignore it', async () => {
+        const { store } = make()
+        const a = org()
+        const account = await store.connect(
+          a,
+          newLinkedinRecord({
+            limits: { dailyConnections: 10, dailyMessages: 10, weeklyConnections: 2 },
+          })
+        )
+        const on = (sendKey: string, d: string) =>
+          store.reserve(a, {
+            accountId: account.id,
+            sendKey,
+            kind: 'connection',
+            day: d,
+            weekStart,
+            at,
+          })
+        expect((await on('m', '2026-03-09')).status).toBe('reserved')
+        expect((await on('t', day)).status).toBe('reserved')
+        expect(await on('w', day)).toEqual({ status: 'over_limit', limit: 'weekly' })
+        expect((await reserve(store, a, account.id, 'msg', 'message')).status).toBe('reserved')
+      })
+
+      test('a limit of zero always refuses', async () => {
+        const { store } = make()
+        const a = org()
+        const account = await store.connect(a, newLinkedinRecord())
+        await store.setLimits(
+          a,
+          account.id,
+          { dailyConnections: 0, dailyMessages: 0, weeklyConnections: 0 },
+          at
+        )
+        expect((await reserve(store, a, account.id, 'x')).status).toBe('over_limit')
+        expect((await reserve(store, a, account.id, 'y', 'message')).status).toBe('over_limit')
+      })
+
+      test('another Organization has its own quota and usage', async () => {
+        const { store } = make()
+        const a = org()
+        const b = org()
+        const one = { dailyConnections: 1, dailyMessages: 1, weeklyConnections: 1 }
+        const accountA = await store.connect(a, newLinkedinRecord({ limits: one }))
+        const accountB = await store.connect(b, newLinkedinRecord({ limits: one }))
+        expect((await reserve(store, a, accountA.id, 'k')).status).toBe('reserved')
+        expect((await reserve(store, b, accountB.id, 'k')).status).toBe('reserved')
+        expect((await store.usageOf(b, accountA.id, day, weekStart)).connections).toBe(0)
+        expect(await store.lastSendAt(b, accountA.id)).toBeNull()
+      })
+
+      test('lastSendAt answers the latest reservation', async () => {
+        const { store } = make()
+        const a = org()
+        const account = await store.connect(a, newLinkedinRecord())
+        expect(await store.lastSendAt(a, account.id)).toBeNull()
+        await reserve(store, a, account.id, 'k')
+        expect(await store.lastSendAt(a, account.id)).toBe(at)
+      })
+
+      test('a paused account reserves nothing', async () => {
+        const { store } = make()
+        const a = org()
+        const account = await store.connect(a, newLinkedinRecord())
+        await store.pause(a, account.id, 'paused', 'checkpoint', at)
+        expect(await reserve(store, a, account.id, 'k1')).toEqual({ status: 'not_connected' })
+        expect((await store.usageOf(a, account.id, day, weekStart)).connections).toBe(0)
+      })
+
+      test('a sent record is not released', async () => {
+        const { store } = make()
+        const a = org()
+        const account = await store.connect(a, newLinkedinRecord())
+        await reserve(store, a, account.id, 'k')
+        await store.markSent(a, 'k', at)
+        expect(await store.release(a, 'k')).toBe(false)
+        expect((await store.usageOf(a, account.id, day, weekStart)).connections).toBe(1)
+      })
+    })
+
+    test('pause changes a connected account once, and only that account', async () => {
+      const { store } = make()
+      const a = org()
+      const account = await store.connect(a, newLinkedinRecord())
+      const other = await store.connect(a, newLinkedinRecord())
+      const at = '2026-03-10T10:00:00.000Z'
+      const [first, second] = await Promise.all([
+        store.pause(a, account.id, 'restricted', 'restricted', at),
+        store.pause(a, account.id, 'restricted', 'restricted', at),
+      ])
+      expect([first, second].filter((r) => r !== null).length).toBe(1)
+      expect((await store.find(a, account.id))?.status).toBe('restricted')
+      expect((await store.find(a, other.id))?.status).toBe('connected')
+      expect(await store.pause(org(), other.id, 'paused', 'checkpoint', at)).toBeNull()
+    })
+
+    test('setLimits changes one account in one Organization', async () => {
+      const { store } = make()
+      const a = org()
+      const account = await store.connect(a, newLinkedinRecord())
+      const limits = { dailyConnections: 5, dailyMessages: 6, weeklyConnections: 7 }
+      expect(
+        (await store.setLimits(a, account.id, limits, '2026-03-10T10:00:00.000Z'))?.limits
+      ).toEqual(limits)
+      expect(
+        await store.setLimits(org(), account.id, limits, '2026-03-10T10:00:00.000Z')
+      ).toBeNull()
+    })
   })
 }

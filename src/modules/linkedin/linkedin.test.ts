@@ -377,3 +377,43 @@ describe('linkedin risk acceptance and the channel switch', () => {
     expect(w.t.deps.linkedinEvents.map((e) => e.event.reason)).toEqual(['acceptance_revoked'])
   })
 })
+
+describe('linkedin account limits', () => {
+  const lower = { dailyConnections: 5, dailyMessages: 10, weeklyConnections: 20 }
+  const patch = (
+    w: Awaited<ReturnType<typeof world>>,
+    id: string,
+    as: TestIdentity,
+    body: unknown = lower
+  ) => w.call('PATCH', `/v1/linkedin/accounts/${id}/limits`, as, undefined, body)
+
+  test('an Admin lowers the limits of an account', async () => {
+    const w = await world()
+    const { account } = await w.connect(w.rep)
+    const reply = await patch(w, account.id, w.admin)
+    expect(reply.status).toBe(200)
+    expect(reply.body.limits).toEqual(lower)
+    expect((await w.call('GET', `/v1/linkedin/accounts/${account.id}`, w.rep)).body.limits).toEqual(
+      lower
+    )
+  })
+
+  test('a limit above the ceiling is refused', async () => {
+    const w = await world()
+    const { account } = await w.connect(w.rep)
+    const reply = await patch(w, account.id, w.admin, { ...lower, dailyConnections: 21 })
+    expect(reply.status).toBe(422)
+    expect(codeOf(reply.body)).toBe('linkedin.limit_above_ceiling')
+    expect(
+      (await w.call('GET', `/v1/linkedin/accounts/${account.id}`, w.rep)).body.limits
+    ).not.toEqual(lower)
+  })
+
+  test('a Rep may not change limits, and another Organization cannot see the account', async () => {
+    const w = await world()
+    const { account } = await w.connect(w.rep)
+    expect((await patch(w, account.id, w.rep)).status).toBe(403)
+    const foreign = { ...w.admin, organizationId: w.outsider.organizationId }
+    expect((await patch(w, account.id, foreign)).status).toBe(404)
+  })
+})

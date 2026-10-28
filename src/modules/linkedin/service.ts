@@ -48,7 +48,8 @@ const cursorSchema = z.strictObject({
   id: linkedinAccountIdSchema,
 })
 
-function linkedinError(code: keyof typeof LINKEDIN_ERRORS) {
+/** The domain error of a LinkedIn code, for the service and the send job. */
+export function linkedinError(code: keyof typeof LINKEDIN_ERRORS) {
   return domainError(LINKEDIN_ERRORS[code] as ErrorDefinition)
 }
 
@@ -405,4 +406,38 @@ export async function updateSettings(
     })
   }
   return getSettings(deps, caller)
+}
+
+/**
+ * Sets one account's limits, each at or below the ceiling (a higher one is
+ * `linkedin.limit_above_ceiling`). Owners and Admins only; the route checks the role. An account of
+ * another Organization is `request.not_found`.
+ */
+export async function updateLimits(
+  deps: LinkedinDeps,
+  caller: LinkedinCaller,
+  id: LinkedinAccountId,
+  limits: LinkedinAccountRecord['limits']
+): Promise<LinkedinAccount> {
+  if (
+    limits.dailyConnections > LINKEDIN_DAILY_CONNECTION_CEILING ||
+    limits.dailyMessages > LINKEDIN_DAILY_MESSAGE_CEILING ||
+    limits.weeklyConnections > LINKEDIN_WEEKLY_CONNECTION_CEILING
+  ) {
+    throw linkedinError('linkedin.limit_above_ceiling')
+  }
+  const record = await deps.store.setLimits(
+    caller.organizationId,
+    id,
+    limits,
+    deps.clock.now().toISOString()
+  )
+  if (record === null) {
+    throw domainError(ERRORS['request.not_found'])
+  }
+  deps.logger.info('linkedin.limits_changed', {
+    organizationId: caller.organizationId,
+    accountId: id,
+  })
+  return present(record)
 }
