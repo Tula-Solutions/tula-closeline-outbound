@@ -21,6 +21,7 @@ import {
   mintTestToken,
   type VirtualTime,
 } from 'tula-closeline-kit/testing'
+import { createSecretBoxVault } from '~/adapters/crypto/vault'
 import { createMemoryBrandVoiceStore } from '~/adapters/memory/brand-voice-store'
 import { createMemoryCampaignStore } from '~/adapters/memory/campaign-store'
 import { createMemoryCore, type MemoryCore } from '~/adapters/memory/core'
@@ -124,13 +125,16 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
   const queue = createMemoryQueue({ registry, clock: time.clock, sleep: time.sleep })
   const processed = createMemoryProcessedStore({ clock: time.clock })
   const core = createMemoryCore()
-  const config = createMemoryProviderConfig()
+  const secretBox = createMemorySecretBox()
+  const vault = createSecretBoxVault(secretBox)
+  const config = createMemoryProviderConfig(vault)
   const store = createMemoryEnrichmentStore()
   const enrichment: Container['enrichment'] = {
     store,
     core: core.prospects,
     access: core.access,
     config,
+    vault,
     providers: overrides.providers ?? [],
     verifiers: overrides.verifiers ?? [],
     queue,
@@ -174,7 +178,7 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     store: createMemoryMailboxStore(),
     access: core.access,
     clock: time.clock,
-    secretBox: createMemorySecretBox(),
+    secretBox,
     transports: { gmail: mail, outlook: outlookMail },
     stateSecret: env.MAIL_STATE_SECRET,
     events: async (organizationId, event) => {

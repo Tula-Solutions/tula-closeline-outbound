@@ -19,6 +19,7 @@ import {
 import { type Consumer, createSqsQueue } from 'tula-closeline-kit/queue'
 import { createMemoryQueue } from 'tula-closeline-kit/testing'
 import { createLocalKeySecretBox, createUnconfiguredSecretBox } from '~/adapters/crypto/secret-box'
+import { createSecretBoxVault } from '~/adapters/crypto/vault'
 import { createGmailMailTransport } from '~/adapters/gmail/mail-transport'
 import { createGraphMailTransport } from '~/adapters/graph/mail-transport'
 import { createHttpCoreProspects } from '~/adapters/http/core'
@@ -30,6 +31,9 @@ import { createPostgresCampaignStore } from '~/adapters/postgres/campaign-store'
 import { createPostgresMailboxStore } from '~/adapters/postgres/mailbox-store'
 import { createPostgresProviderConfig } from '~/adapters/postgres/provider-config'
 import { createPostgresEnrichmentStore } from '~/adapters/postgres/store'
+import { createApolloProvider } from '~/adapters/providers/apollo'
+import { createCircuit } from '~/adapters/providers/circuit'
+import { createZeroBounceVerifier } from '~/adapters/providers/zerobounce'
 import { createOutboundConsumer } from '~/consumer'
 import { describeError } from '~/describe-error'
 import { type Env, loadEnv } from '~/env'
@@ -40,7 +44,6 @@ import type { CampaignDeps } from '~/modules/campaign/deps'
 import type { EnrichmentDeps } from '~/modules/enrichment/deps'
 import { enrichmentHandlers } from '~/modules/enrichment/handlers'
 import type { MailboxDeps } from '~/modules/mailbox/deps'
-import type { CredentialVault } from '~/ports/provider-config'
 import { trackerSafe } from '~/tracker-safe'
 
 /** One dependency probe for `/readyz`: resolve when healthy, reject or stall when not. */
@@ -140,9 +143,6 @@ function createQueue(env: Env): Queue<OutboundEnvelope> {
   })
 }
 
-/** No key management exists yet (ADR pending), so no credential opens and every provider is skipped. */
-const unconfiguredVault: CredentialVault = { open: async () => null }
-
 /**
  * The single composition root: the only place adapters and process-wide objects are constructed.
  * Core's Prospect read and write-back use the HTTP adapter outside `local` or whenever `CORE_URL`
@@ -174,12 +174,7 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
   })
   if (env.ENVIRONMENT !== 'local') {
     logger.warn('ports still on fakes', {
-      ports: [
-        'core access check',
-        'membership id and Team lookup',
-        'enrichment providers',
-        'email verifiers',
-      ],
+      ports: ['core access check', 'membership id and Team lookup'],
     })
   }
   const inOrganization: Container['withOrganization'] = (organizationId, fn) =>
@@ -200,13 +195,27 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
           logger,
         })
       : undefined
+  const secretBox =
+    env.MAIL_SECRET_BOX_KEY !== undefined
+      ? createLocalKeySecretBox(env.MAIL_SECRET_BOX_KEY)
+      : env.ENVIRONMENT === 'local'
+        ? createMemorySecretBox()
+        : createUnconfiguredSecretBox()
+  const vault = createSecretBoxVault(secretBox)
+  const circuit = () =>
+    createCircuit({
+      failures: env.PROVIDER_CIRCUIT_FAILURES,
+      openMs: env.PROVIDER_CIRCUIT_OPEN_MS,
+      now: () => Date.now(),
+    })
   const enrichment: EnrichmentDeps = {
     store: createPostgresEnrichmentStore(inOrganization),
     core: coreHttp ?? core.prospects,
     access: core.access,
-    config: createPostgresProviderConfig(inOrganization, unconfiguredVault),
-    providers: [],
-    verifiers: [],
+    config: createPostgresProviderConfig(inOrganization, vault),
+    vault,
+    providers: [createApolloProvider({ baseUrl: env.APOLLO_BASE_URL, guard: circuit() })],
+    verifiers: [createZeroBounceVerifier({ baseUrl: env.ZEROBOUNCE_BASE_URL, guard: circuit() })],
     queue,
     clock: systemClock,
     sleep: systemSleep,
@@ -235,12 +244,7 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     store: createPostgresMailboxStore(inOrganization),
     access: core.access,
     clock: systemClock,
-    secretBox:
-      env.MAIL_SECRET_BOX_KEY !== undefined
-        ? createLocalKeySecretBox(env.MAIL_SECRET_BOX_KEY)
-        : env.ENVIRONMENT === 'local'
-          ? createMemorySecretBox()
-          : createUnconfiguredSecretBox(),
+    secretBox,
     transports: {
       gmail:
         env.GOOGLE_CLIENT_ID !== undefined && env.GOOGLE_CLIENT_SECRET !== undefined

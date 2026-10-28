@@ -12,8 +12,9 @@ export const MAX_SEALED_SECRET_BYTES = 8192
  */
 export type SecretContext = {
   organizationId: OrganizationId
-  mailboxId: MailboxId
-  purpose: 'access_token' | 'refresh_token'
+  /** The Mailbox id, or the provider key for a provider credential. */
+  mailboxId: MailboxId | string
+  purpose: 'access_token' | 'refresh_token' | 'provider_key'
 }
 
 /** A value after sealing: which key sealed it, and the opaque bytes to store. */

@@ -8,6 +8,7 @@ import type { AppEnv } from '~/http/types'
 import { createBrandVoiceRouter } from '~/modules/brand-voice/router'
 import { createCampaignRouter } from '~/modules/campaign/router'
 import { createEnrichmentRouter } from '~/modules/enrichment/router'
+import { createSettingsRouter } from '~/modules/enrichment/settings-router'
 import { createHealthRouter } from '~/modules/health/router'
 import { createMailboxRouter } from '~/modules/mailbox/router'
 import { serveOpenApi } from '~/openapi'
@@ -26,6 +27,7 @@ export function createApp(container: Container): OpenAPIHono<AppEnv> {
   const publicRoutes = createRouter<AuthedEnv>()
   publicRoutes.use('/v1/*', authenticate(container))
   publicRoutes.route('/', createEnrichmentRouter(container.enrichment))
+  publicRoutes.route('/', createSettingsRouter(container.enrichment))
   publicRoutes.route('/', createCampaignRouter(container.campaigns))
   publicRoutes.route('/', createBrandVoiceRouter(container.brandVoice))
   publicRoutes.route('/', createMailboxRouter(container.mailboxes))

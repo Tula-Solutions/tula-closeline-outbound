@@ -2,7 +2,7 @@ import type { Clock, Logger, Queue, Sleep } from 'tula-closeline-kit'
 import type { OutboundEnvelope } from '~/messages'
 import type { CoreAccess, CoreProspects } from '~/ports/core'
 import type { EmailVerifier, EnrichmentProvider } from '~/ports/enrichment-provider'
-import type { ProviderConfig } from '~/ports/provider-config'
+import type { CredentialVault, ProviderConfig } from '~/ports/provider-config'
 import type { EnrichmentStore } from '~/ports/store'
 
 /** The numbers that bound enrichment work, from the environment. */
@@ -27,6 +27,8 @@ export type EnrichmentDeps = {
   core: CoreProspects
   access: CoreAccess
   config: ProviderConfig
+  /** Seals an Organization's own provider keys at rest. */
+  vault: CredentialVault
   providers: readonly EnrichmentProvider[]
   verifiers: readonly EmailVerifier[]
   /** The queue the runs are sent through. */
