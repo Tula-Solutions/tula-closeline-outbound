@@ -28,6 +28,11 @@ import { createMemoryAudienceCheckStore } from '~/adapters/memory/audience-check
 import { createMemoryBrandVoiceStore } from '~/adapters/memory/brand-voice-store'
 import { createMemoryCampaignStore } from '~/adapters/memory/campaign-store'
 import { createMemoryCore, type MemoryCore } from '~/adapters/memory/core'
+import {
+  createMemoryApprovals,
+  createMemoryDraftSource,
+  createMemoryProspectContacts,
+} from '~/adapters/memory/engine'
 import { createMemoryEnrollmentStore } from '~/adapters/memory/enrollment-store'
 import { createMemoryFitStore } from '~/adapters/memory/fit-store'
 import {
@@ -59,6 +64,7 @@ import type { AppEnv } from '~/http/types'
 import { SERVICE } from '~/info'
 import { type OutboundDefinition, registry } from '~/messages'
 import { campaignHandlers } from '~/modules/campaign/audience'
+import { engineHandlers } from '~/modules/engine/service'
 import { enrichmentHandlers } from '~/modules/enrichment/handlers'
 import {
   defaultSendSettings,
@@ -88,6 +94,10 @@ export type TestDeps = Container & {
   store: ReturnType<typeof createMemoryEnrichmentStore>
   /** The kit's memory error reporter: what the consumer and the error handler would send to Sentry. */
   errors: MemoryErrorReporter
+  /** The engine's Draft, approvals and contact stand-ins: shape a Draft, read what went to approvals. */
+  engineDrafts: ReturnType<typeof createMemoryDraftSource>
+  engineApprovals: ReturnType<typeof createMemoryApprovals>
+  engineContacts: ReturnType<typeof createMemoryProspectContacts>
   /** The Gmail stand-in: consent as a person, revoke a grant, fail the provider, read what was sent. */
   mail: MemoryMailTransport
   /** The Outlook stand-in, same controls. */
@@ -261,6 +271,23 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     organizationDailyCap: env.MAIL_ORG_DAILY_CAP,
   }
 
+  const engineDrafts = createMemoryDraftSource(() => time.clock.now().toISOString())
+  const engineApprovals = createMemoryApprovals()
+  const engineContacts = createMemoryProspectContacts()
+  const engine: Container['engine'] = {
+    enrollments: campaigns.enrollments,
+    campaigns: campaigns.store,
+    send,
+    drafts: engineDrafts,
+    approvals: engineApprovals,
+    contacts: engineContacts,
+    queue,
+    clock: time.clock,
+    random: Math.random,
+    logger,
+    limits: { orgBatch: 50, stepPage: 100, leaseSeconds: 600 },
+  }
+
   const linkedinEvents: TestDeps['linkedinEvents'] = []
   const linkedinPaused: TestDeps['linkedinPaused'] = []
   const linkedinProvider = createMemoryLinkedInProvider(time.clock)
@@ -302,6 +329,10 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     signalEvents,
     send,
     linkedin,
+    engine,
+    engineDrafts,
+    engineApprovals,
+    engineContacts,
     ai: { model: createMemoryModel(), web: createMemoryWebSearch() },
     linkedinProvider,
     linkedinStore,
@@ -319,7 +350,11 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
       store: processed,
       logger,
       errorReporter: errors,
-      handlers: { ...enrichmentHandlers(enrichment), ...campaignHandlers(campaigns) },
+      handlers: {
+        ...enrichmentHandlers(enrichment),
+        ...campaignHandlers(campaigns),
+        ...engineHandlers(engine),
+      },
       concurrency: overrides.consumerConcurrency ?? env.CONSUMER_CONCURRENCY,
       sleep: time.sleep,
     }),

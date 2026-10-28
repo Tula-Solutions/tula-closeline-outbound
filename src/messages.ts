@@ -1,8 +1,11 @@
 import {
   campaignIdSchema,
   enrichmentRunIdSchema,
+  enrollmentIdSchema,
+  MAX_ATTEMPT_EPOCH,
   prospectIdSchema,
   roleSchema,
+  stepKeySchema,
   timestampSchema,
   userIdSchema,
 } from 'tula-closeline-contract'
@@ -49,11 +52,30 @@ export const audienceCheckPage = defineMessage({
   }),
 })
 
+/**
+ * Asks the consumer to run one Step of one Enrollment at one attempt epoch. The Enrollment row is
+ * the source of truth: the handler does nothing unless the Enrollment is still active at that
+ * Step and epoch, so a repeated or late message changes nothing.
+ */
+export const enrollmentStep = defineMessage({
+  type: 'enrollment.step',
+  version: 1,
+  scope: 'organization',
+  payload: z.object({
+    enrollmentId: enrollmentIdSchema,
+    stepKey: stepKeySchema,
+    attemptEpoch: z.number().int().min(0).max(MAX_ATTEMPT_EPOCH),
+  }),
+})
+
 /** Every message type this service's queue carries. */
-export type OutboundDefinition = typeof enrichmentRun | typeof audienceCheckPage
+export type OutboundDefinition =
+  | typeof enrichmentRun
+  | typeof audienceCheckPage
+  | typeof enrollmentStep
 
 /** An envelope of any type this service's queue carries. */
 export type OutboundEnvelope = EnvelopeOf<OutboundDefinition>
 
 /** Validates and builds the envelopes of {@link OutboundDefinition}; shared by the queue and publishers. */
-export const registry = createMessageRegistry([enrichmentRun, audienceCheckPage])
+export const registry = createMessageRegistry([enrichmentRun, audienceCheckPage, enrollmentStep])

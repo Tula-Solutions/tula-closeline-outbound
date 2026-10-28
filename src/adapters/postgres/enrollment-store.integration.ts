@@ -21,8 +21,9 @@ afterAll(() => database.close())
 const campaigns = createPostgresCampaignStore((organizationId, fn) =>
   withOrganization(database.db, organizationId, fn)
 )
-const store = createPostgresEnrollmentStore((organizationId, fn) =>
-  withOrganization(database.db, organizationId, fn)
+const store = createPostgresEnrollmentStore(
+  (organizationId, fn) => withOrganization(database.db, organizationId, fn),
+  database.db
 )
 
 const AT = '2026-03-10T12:00:00.000Z'
@@ -182,5 +183,69 @@ describe('the Postgres Enrollment store', () => {
         ])
       ).size
     ).toBe(0)
+  })
+
+  test('claimDue takes due rows once, leases them, and keeps to one Organization', async () => {
+    const org = newOrganizationId()
+    const other = newOrganizationId()
+    const campaignId = await seedCampaign(org)
+    const otherCampaign = await seedCampaign(other)
+    const due = row(campaignId, '2026-03-10T11:00:00.000Z')
+    const later = row(campaignId, '2026-03-12T11:00:00.000Z')
+    const theirs = row(otherCampaign, '2026-03-10T11:00:00.000Z')
+    for (const r of [due, later]) {
+      await store.insertIfAbsent(org, r.enrollment, r.events)
+    }
+    await store.insertIfAbsent(other, theirs.enrollment, theirs.events)
+    const lease = '2026-03-10T12:10:00.000Z'
+    const first = await store.claimDue(org, AT, lease, 10)
+    expect(first.map((e) => e.id)).toEqual([due.enrollment.id])
+    expect(first[0]?.nextDueAt).toBe(lease)
+    expect(await store.claimDue(org, AT, lease, 10)).toEqual([])
+    expect((await store.find(other, theirs.enrollment.id))?.nextDueAt).toBe(
+      '2026-03-10T11:00:00.000Z'
+    )
+    expect(await store.claimDue(org, '2026-03-10T12:11:00.000Z', lease, 10)).toHaveLength(1)
+  })
+
+  test('advance moves a matching active row once and writes nothing for a repeat', async () => {
+    const org = newOrganizationId()
+    const campaignId = await seedCampaign(org)
+    const r = row(campaignId, AT)
+    await store.insertIfAbsent(org, r.enrollment, r.events)
+    const to = {
+      state: 'active' as const,
+      currentStepKey: 'next',
+      currentStep: 1,
+      attemptEpoch: 0,
+      nextDueAt: '2026-03-11T12:00:00.000Z',
+    }
+    const expectAt = { stepKey: 'intro', attemptEpoch: 0 }
+    const moved = await store.advance(org, r.enrollment.id, expectAt, to, [])
+    expect(moved).toMatchObject({ currentStepKey: 'next', currentStep: 1 })
+    expect(await store.advance(org, r.enrollment.id, expectAt, to, [])).toBeNull()
+    const done = await store.advance(
+      org,
+      r.enrollment.id,
+      { stepKey: 'next', attemptEpoch: 0 },
+      { state: 'completed', at: AT },
+      []
+    )
+    expect(done).toMatchObject({ state: 'completed', nextDueAt: null, currentStep: null })
+  })
+
+  test('dueOrganizations finds only Organizations with an active due Enrollment', async () => {
+    const org = newOrganizationId()
+    const campaignId = await seedCampaign(org)
+    const r = row(campaignId, '2020-01-01T00:00:00.000Z')
+    await store.insertIfAbsent(org, r.enrollment, r.events)
+    let after: string | null = null
+    const seen: string[] = []
+    do {
+      const page = await store.dueOrganizations(after, 500, new Date().toISOString())
+      seen.push(...page.organizationIds)
+      after = page.next
+    } while (after !== null)
+    expect(seen).toContain(org)
   })
 })
