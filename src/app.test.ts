@@ -32,6 +32,7 @@ test('the app serves its OpenAPI document describing every route and the error b
     '/v1/campaigns/{campaignId}/duplicate',
     '/v1/campaigns/{campaignId}/enrollments',
     '/v1/campaigns/{campaignId}/pause',
+    '/v1/campaigns/{campaignId}/preview',
     '/v1/campaigns/{campaignId}/sequence',
     '/v1/campaigns/{campaignId}/steps/{stepKey}/variants',
     '/v1/campaigns/{campaignId}/steps/{stepKey}/variants/{variantKey}/promote',
