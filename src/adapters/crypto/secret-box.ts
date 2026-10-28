@@ -24,7 +24,11 @@ export class SecretBoxUnconfiguredError extends Error {
 /** What the box binds a value to, as bytes, in a fixed order. */
 function contextBytes(context: SecretContext): Buffer {
   return Buffer.from(
-    JSON.stringify([context.organizationId, context.mailboxId, context.purpose]),
+    JSON.stringify([
+      context.organizationId,
+      'mailboxId' in context ? context.mailboxId : null,
+      context.purpose,
+    ]),
     'utf8'
   )
 }

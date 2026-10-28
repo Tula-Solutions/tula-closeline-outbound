@@ -308,6 +308,35 @@ describe('graph adapter', () => {
     expect(sends).toBe(2)
   })
 
+  test('any non-202 answer after a 429 or 503 retry is an unknown outcome, and keeps the draft', async () => {
+    for (const [first, second] of [
+      [429, 400],
+      [503, 500],
+      [429, 401],
+    ] as const) {
+      const deleted: string[] = []
+      let sends = 0
+      const transport = createGraphMailTransport({
+        ...BASE,
+        fetch: async (input, init) => {
+          if (init.method === 'DELETE') {
+            deleted.push(input)
+            return new Response('{}', { status: 204 })
+          }
+          if (!input.endsWith('/send')) {
+            return Response.json({ id: 'D1', conversationId: 'C1' }, { status: 201 })
+          }
+          sends += 1
+          return new Response('{}', { status: sends === 1 ? first : second })
+        },
+        sleep: async () => {},
+      })
+      const error = await transport.send('tok', MESSAGE).catch((e: unknown) => e)
+      expect((error as MailTransportError).failure).toBe('timeout')
+      expect(deleted).toEqual([])
+    }
+  })
+
   test('a definite refusal on the send step deletes the draft; an unknown outcome keeps it', async () => {
     const run = async (sendStatus: number | 'timeout') => {
       const deleted: string[] = []

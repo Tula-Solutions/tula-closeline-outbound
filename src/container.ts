@@ -32,9 +32,12 @@ import { createMemorySecretBox } from '~/adapters/memory/secret-box'
 import { createPostgresBrandVoiceStore } from '~/adapters/postgres/brand-voice-store'
 import { createPostgresCampaignStore } from '~/adapters/postgres/campaign-store'
 import { createPostgresEnrollmentStore } from '~/adapters/postgres/enrollment-store'
+import { createPostgresFitStore } from '~/adapters/postgres/fit-store'
 import { createPostgresLinkedinStore } from '~/adapters/postgres/linkedin-store'
 import { createPostgresMailboxStore } from '~/adapters/postgres/mailbox-store'
 import { createPostgresProviderConfig } from '~/adapters/postgres/provider-config'
+import { createPostgresSendStore } from '~/adapters/postgres/send-store'
+import { createPostgresSignalStore } from '~/adapters/postgres/signal-store'
 import { createPostgresEnrichmentStore } from '~/adapters/postgres/store'
 import { createApolloProvider } from '~/adapters/providers/apollo'
 import { createCircuit } from '~/adapters/providers/circuit'
@@ -49,8 +52,11 @@ import { campaignHandlers } from '~/modules/campaign/audience'
 import type { CampaignDeps } from '~/modules/campaign/deps'
 import type { EnrichmentDeps } from '~/modules/enrichment/deps'
 import { enrichmentHandlers } from '~/modules/enrichment/handlers'
+import type { FitDeps } from '~/modules/fit/deps'
 import { defaultSendSettings, type LinkedinDeps } from '~/modules/linkedin/deps'
 import type { MailboxDeps } from '~/modules/mailbox/deps'
+import type { SendDeps } from '~/modules/send/deps'
+import type { SignalDeps } from '~/modules/signal/deps'
 import { trackerSafe } from '~/tracker-safe'
 
 /** One dependency probe for `/readyz`: resolve when healthy, reject or stall when not. */
@@ -94,6 +100,12 @@ export type Container = {
   brandVoice: BrandVoiceDeps
   /** Everything the mailbox module needs; its service functions take this first. */
   mailboxes: MailboxDeps
+  /** Everything the signal module needs; its service functions take this first. */
+  signals: SignalDeps
+  /** Everything the fit module needs; its service functions take this first. */
+  fit: FitDeps
+  /** Everything the send pipeline needs. */
+  send: SendDeps
   /** Everything the LinkedIn module needs; its service functions take this first. */
   linkedin: LinkedinDeps
   /** The queue consumer; built here, started by `server.ts` and stopped on shutdown. */
@@ -271,6 +283,26 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     access: core.access,
     clock: systemClock,
   }
+  // There is no event bus in this service yet; Signal and fit events are logged (ids and numbers only).
+  const signalEvents: SignalDeps['events'] = async (organizationId, event) => {
+    logger.info(event.name, { organizationId, ...event.payload })
+  }
+  const prospectsCore = coreHttp ?? core.prospects
+  const signals: SignalDeps = {
+    store: createPostgresSignalStore(inOrganization),
+    core: prospectsCore,
+    access: core.access,
+    secretBox,
+    clock: systemClock,
+    events: signalEvents,
+  }
+  const fit: FitDeps = {
+    store: createPostgresFitStore(inOrganization),
+    core: prospectsCore,
+    access: core.access,
+    clock: systemClock,
+    events: signalEvents,
+  }
   const linkedin: LinkedinDeps = {
     store: createPostgresLinkedinStore(inOrganization),
     access: core.access,
@@ -342,6 +374,16 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     },
     logger,
   }
+  const send: SendDeps = {
+    store: createPostgresSendStore(inOrganization),
+    mailboxes,
+    campaigns: campaigns.store,
+    guard: campaigns.guard,
+    clock: systemClock,
+    logger,
+    unsubscribe: { secret: env.MAIL_STATE_SECRET, url: env.MAIL_UNSUBSCRIBE_URL },
+    organizationDailyCap: env.MAIL_ORG_DAILY_CAP,
+  }
   const consumer = createOutboundConsumer({
     queue,
     store: processed,
@@ -368,6 +410,9 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     campaigns,
     brandVoice,
     mailboxes,
+    signals,
+    fit,
+    send,
     linkedin,
     consumer,
     readinessChecks: [

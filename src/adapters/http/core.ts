@@ -151,6 +151,12 @@ export function createHttpCoreProspects(options: HttpCoreOptions): CoreProspects
       return { prospectId: parsed.data.prospectId, values: valuesOf(parsed.data) }
     },
 
+    // shortcut: core has no internal email lookup route yet, so a webhook that names a Prospect
+    // by email is answered as not found; upgrade when core offers the route.
+    async findProspectIdByEmail() {
+      return null
+    },
+
     async writeEnrichedFields(organizationId, prospectId, write) {
       const route = 'writeEnrichedFields'
       const answer = await call(route, {

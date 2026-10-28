@@ -68,9 +68,11 @@ function mailError(code: keyof typeof MAIL_ERRORS): AppError {
   return domainError(MAIL_ERRORS[code] as ErrorDefinition)
 }
 
-type View = { me: MembershipId; owners: readonly MembershipId[] | undefined }
+/** Whose Mailboxes a caller sees: `owners` undefined means all (Owner and Admin). */
+export type View = { me: MembershipId; owners: readonly MembershipId[] | undefined }
 
-async function viewOf(deps: MailboxDeps, caller: MailboxCaller): Promise<View> {
+/** The view of Mailboxes a caller has by role: all, their Team's Reps', or their own. */
+export async function viewOf(deps: MailboxDeps, caller: MailboxCaller): Promise<View> {
   const me = await deps.access.membershipIdOf(caller.organizationId, caller.userId)
   if (caller.role === 'owner' || caller.role === 'admin') {
     return { me, owners: undefined }
@@ -85,15 +87,16 @@ async function viewOf(deps: MailboxDeps, caller: MailboxCaller): Promise<View> {
   return { me, owners: [me] }
 }
 
-function sees(view: View, record: MailboxRecord): boolean {
+/** Whether a view includes a Mailbox. */
+export function sees(view: View, record: MailboxRecord): boolean {
   return (
     view.owners === undefined ||
     (record.ownerMembershipId !== null && view.owners.includes(record.ownerMembershipId))
   )
 }
 
-/** A record as the response shows it; the schema drops every field it does not name. */
-function present(record: MailboxRecord, now: Date): Mailbox {
+/** What a Mailbox may send now: its limits after the ramp and its health, and zero when it is stopped. */
+export function effectiveLimitsOf(record: MailboxRecord, now: Date) {
   const dayIndex = Math.max(
     0,
     Math.floor((now.getTime() - new Date(record.rampStartedAt).getTime()) / DAY_MS)
@@ -109,6 +112,20 @@ function present(record: MailboxRecord, now: Date): Mailbox {
   const halve = record.health.effect === 'limit_halved' ? 2 : 1
   const perDay = Math.floor(Math.min(record.limits.perDay, perDayNow ?? Infinity) / halve)
   const perHour = Math.floor(record.limits.perHour / halve)
+  return {
+    stopped,
+    ramp: { active, dayIndex, perDayNow },
+    effective: {
+      perDay: stopped ? 0 : perDay,
+      perHour: stopped ? 0 : Math.min(perHour, perDay),
+      minGapSeconds: record.limits.minGapSeconds,
+    },
+  }
+}
+
+/** A record as the response shows it; the schema drops every field it does not name. */
+function present(record: MailboxRecord, now: Date): Mailbox {
+  const { ramp, effective } = effectiveLimitsOf(record, now)
   return mailboxSchema.parse({
     id: record.id,
     provider: record.provider,
@@ -120,12 +137,8 @@ function present(record: MailboxRecord, now: Date): Mailbox {
     state: record.state,
     stateReason: record.stateReason,
     limits: record.limits,
-    effectiveLimits: {
-      perDay: stopped ? 0 : perDay,
-      perHour: stopped ? 0 : Math.min(perHour, perDay),
-      minGapSeconds: record.limits.minGapSeconds,
-    },
-    ramp: { active, dayIndex, perDayNow, steps: MAILBOX_RAMP_STEPS.map((s) => ({ ...s })) },
+    effectiveLimits: effective,
+    ramp: { ...ramp, steps: MAILBOX_RAMP_STEPS.map((s) => ({ ...s })) },
     health: {
       status: record.health.score === null ? 'not_enough_data' : 'scored',
       score: record.health.score,
