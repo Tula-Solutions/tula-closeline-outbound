@@ -10,19 +10,23 @@ import {
   type TokenVerifier,
 } from 'tula-closeline-kit'
 import {
+  createMemoryContactGuard,
   createMemoryErrorReporter,
   createMemoryQueue,
   createTestJwks,
   createTestKeyPair,
   createVirtualTime,
+  type MemoryContactGuard,
   type MemoryErrorReporter,
   type MemoryQueue,
   type MintTokenOptions,
   mintTestToken,
   type VirtualTime,
 } from 'tula-closeline-kit/testing'
+import { createMemoryAudienceCheckStore } from '~/adapters/memory/audience-check-store'
 import { createMemoryCampaignStore } from '~/adapters/memory/campaign-store'
 import { createMemoryCore, type MemoryCore } from '~/adapters/memory/core'
+import { createMemoryEnrollmentStore } from '~/adapters/memory/enrollment-store'
 import {
   createMemoryMailTransport,
   type MemoryMailTransport,
@@ -39,6 +43,7 @@ import { loadEnv } from '~/env'
 import type { AppEnv } from '~/http/types'
 import { SERVICE } from '~/info'
 import { type OutboundDefinition, registry } from '~/messages'
+import { campaignHandlers } from '~/modules/campaign/audience'
 import { enrichmentHandlers } from '~/modules/enrichment/handlers'
 import type { MailboxStateChanged } from '~/modules/mailbox/deps'
 
@@ -54,6 +59,8 @@ export type TestDeps = Container & {
   queue: MemoryQueue<OutboundDefinition>
   /** Core in memory: seed Prospects, read what enrichment wrote, count the calls. */
   core: MemoryCore
+  /** Contact Check stand-in: allow or deny a Prospect, or make the check unavailable. */
+  guard: MemoryContactGuard
   /** The provider settings; a test sets them per Organization. */
   config: ReturnType<typeof createMemoryProviderConfig>
   /** The store in memory, to read spend. */
@@ -145,10 +152,17 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     },
   }
 
+  const guard = createMemoryContactGuard()
   const campaigns: Container['campaigns'] = {
     store: createMemoryCampaignStore(),
     access: core.access,
     clock: time.clock,
+    enrollments: createMemoryEnrollmentStore(),
+    checks: createMemoryAudienceCheckStore(),
+    audience: core.audience,
+    guard,
+    queue,
+    logger,
   }
 
   const mail = createMemoryMailTransport({
@@ -186,6 +200,7 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     mail,
     mailEvents,
     core,
+    guard,
     config,
     store,
     consumer: createOutboundConsumer({
@@ -193,7 +208,7 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
       store: processed,
       logger,
       errorReporter: errors,
-      handlers: enrichmentHandlers(enrichment),
+      handlers: { ...enrichmentHandlers(enrichment), ...campaignHandlers(campaigns) },
       concurrency: overrides.consumerConcurrency ?? env.CONSUMER_CONCURRENCY,
       sleep: time.sleep,
     }),
