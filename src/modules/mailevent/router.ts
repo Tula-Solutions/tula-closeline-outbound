@@ -75,13 +75,13 @@ const confirmRoute = createRoute({
 export function createMailEventRouter(deps: MailEventDeps): OpenAPIHono<AppEnv> {
   const router = createRouter<AppEnv>()
 
-  /** Reads the Mailbox a genuine state names; any other state is `auth.unauthenticated`. */
+  /** Queues a read of the Mailbox a genuine state names; any other state is `auth.unauthenticated`. */
   async function pollState(state: string | undefined): Promise<boolean> {
     const named = state === undefined ? null : verifyWebhookState(deps.secret, state)
     if (named === null) {
       return false
     }
-    await MailEvents.pollMailbox(deps, named.organizationId, named.mailboxId)
+    await MailEvents.enqueuePoll(deps, named.organizationId, named.mailboxId)
     return true
   }
 

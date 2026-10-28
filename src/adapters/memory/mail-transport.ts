@@ -1,9 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { MailboxProvider } from 'tula-closeline-contract'
 import type { Clock } from 'tula-closeline-kit'
+import { INBOUND_PAGE_SIZE } from '~/adapters/inbound-classify'
 import {
   type ConnectedAccount,
   type InboundNotice,
+  type InboundPage,
   type MailTransport,
   MailTransportError,
   type OutgoingMessage,
@@ -179,13 +181,19 @@ export function createMemoryMailTransport(
       return { providerMessageId: id, threadId: message.threadId ?? id }
     },
 
-    async fetchInbound(accessToken, { since }) {
+    async fetchInbound(accessToken, { cursor, since }): Promise<InboundPage> {
       guard()
       const token = accessTokens.get(accessToken)
       if (token === undefined || token.expiresAt <= options.clock.now().getTime()) {
         throw new MailTransportError('token_expired', 401)
       }
-      return inbox.filter((n) => n.receivedAt >= since).slice(0, 50)
+      const from = cursor === null ? 0 : Number(cursor)
+      const end = Math.min(from + INBOUND_PAGE_SIZE, inbox.length)
+      return {
+        notices: inbox.slice(from, end).filter((n) => n.receivedAt >= since),
+        cursor: String(end),
+        more: end < inbox.length,
+      }
     },
   }
 }

@@ -318,33 +318,126 @@ describe.skipIf(process.env.GMAIL_LIVE_REFRESH_TOKEN === undefined)('gmail live 
   })
 })
 
+const reply = { name: 'x' }
+const raw = (body: unknown, status = 200): Response =>
+  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
+
+/** A Gmail that answers the profile, history, list and message calls; `history` decides the history answer. */
+function inboxGoogle(history: () => Response) {
+  const urls: string[] = []
+  const transport = createGmailMailTransport({
+    ...BASE,
+    fetch: async (input) => {
+      urls.push(input)
+      const path = new URL(input).pathname
+      if (path.endsWith('/profile')) {
+        return raw({ emailAddress: 'rep@us.test', historyId: '100' })
+      }
+      if (path.endsWith('/history')) {
+        return history()
+      }
+      if (input.includes('m-reply')) {
+        return json('message-reply.json')
+      }
+      if (input.includes('m-bounce')) {
+        return json('message-bounce.json')
+      }
+      if (input.includes('m-gone')) {
+        return raw({}, 404)
+      }
+      return json('inbox-list.json')
+    },
+    sleep: async () => undefined,
+  })
+  return { transport, urls }
+}
+const INPUT = { since: '2026-10-01T00:00:00.000Z', ownAddress: 'rep@us.test' }
+const added = (id: string, messageId: string) => ({
+  id,
+  messagesAdded: [{ message: { id: messageId, threadId: `t-${messageId}` } }],
+})
+
 describe('Gmail fetchInbound', () => {
-  test('reads headers only and classifies a reply and a bounce', async () => {
+  test('the first read lists the inbox, classifies headers only, and keeps the profile history id', async () => {
+    const { transport, urls } = inboxGoogle(() => raw({}))
+    const page = await transport.fetchInbound('token', { ...INPUT, cursor: null })
+    expect(page.notices.map((n) => [n.providerMessageId, n.threadId, n.kind])).toEqual([
+      ['m-reply', 't-1', 'reply'],
+      ['m-bounce', 't-2', 'hard_bounce'],
+    ])
+    expect(page).toMatchObject({ cursor: '100', more: false })
+    expect(urls.some((u) => u.includes('format=metadata'))).toBe(true)
+    expect(urls.every((u) => !u.includes('format=full') && !u.includes('format=raw'))).toBe(true)
+  })
+
+  test('a long first read resumes from its page token and never keeps a cursor past unread mail', async () => {
     const urls: string[] = []
     const transport = createGmailMailTransport({
       ...BASE,
       fetch: async (input) => {
         urls.push(input)
-        if (input.includes('m-reply')) {
-          return json('message-reply.json')
+        if (input.includes('/profile')) {
+          return raw({ historyId: '100' })
         }
-        if (input.includes('m-bounce')) {
-          return json('message-bounce.json')
+        if (input.includes('/messages?')) {
+          return raw({ messages: [{ id: 'm-reply' }], nextPageToken: 'pg2' })
         }
-        return json('inbox-list.json')
+        return json('message-reply.json')
       },
       sleep: async () => undefined,
     })
-    const notices = await transport.fetchInbound('token', {
-      since: '2026-10-01T00:00:00.000Z',
-      ownAddress: 'rep@us.test',
+    const first = await transport.fetchInbound('token', { ...INPUT, cursor: null })
+    expect(first).toMatchObject({ cursor: 'list:100:pg2', more: true })
+    const second = await transport.fetchInbound('token', { ...INPUT, cursor: first.cursor })
+    expect(urls.filter((u) => u.includes('/profile'))).toHaveLength(1)
+    expect(urls.some((u) => u.includes('pageToken=pg2'))).toBe(true)
+    expect(second.cursor).toBe('list:100:pg2')
+  })
+
+  test('later reads follow the history from the cursor and move it to the mailbox history id', async () => {
+    const { transport, urls } = inboxGoogle(() =>
+      raw({
+        history: [added('101', 'm-reply'), added('102', 'm-bounce'), added('103', 'm-gone')],
+        historyId: '105',
+      })
+    )
+    const page = await transport.fetchInbound('token', { ...INPUT, cursor: '100' })
+    expect(page.notices.map((n) => n.providerMessageId)).toEqual(['m-reply', 'm-bounce'])
+    expect(page).toMatchObject({ cursor: '105', more: false })
+    expect(urls.some((u) => u.includes('startHistoryId=100'))).toBe(true)
+  })
+
+  test('a history page that is cut short keeps the cursor at the last record read', async () => {
+    const { transport } = inboxGoogle(() =>
+      raw({
+        history: [added('101', 'm-reply'), added('102', 'm-bounce')],
+        historyId: '900',
+        nextPageToken: 'more',
+      })
+    )
+    const page = await transport.fetchInbound('token', { ...INPUT, cursor: '100' })
+    expect(page).toMatchObject({ cursor: '102', more: true })
+  })
+
+  test('a history id Gmail no longer holds starts the first read again', async () => {
+    const { transport } = inboxGoogle(() => raw(reply, 404))
+    const page = await transport.fetchInbound('token', { ...INPUT, cursor: '1' })
+    expect(page.notices).toHaveLength(2)
+    expect(page.cursor).toBe('100')
+  })
+
+  test('a message that cannot be read fails the read so the cursor stays', async () => {
+    const transport = createGmailMailTransport({
+      ...BASE,
+      fetch: async (input) =>
+        input.includes('/history')
+          ? raw({ history: [added('101', 'm-reply')], historyId: '9' })
+          : raw({}, 500),
+      sleep: async () => undefined,
     })
-    expect(notices.map((n) => [n.providerMessageId, n.threadId, n.kind])).toEqual([
-      ['m-reply', 't-1', 'reply'],
-      ['m-bounce', 't-2', 'hard_bounce'],
-    ])
-    expect(urls.some((u) => u.includes('format=metadata'))).toBe(true)
-    expect(urls.every((u) => !u.includes('format=full') && !u.includes('format=raw'))).toBe(true)
+    await expect(
+      transport.fetchInbound('token', { ...INPUT, cursor: '100' })
+    ).rejects.toMatchObject({ failure: 'unavailable' })
   })
 
   test('a rejected token is token_expired', async () => {
@@ -353,8 +446,8 @@ describe('Gmail fetchInbound', () => {
       fetch: async () => json('unauthenticated.json', 401),
       sleep: async () => undefined,
     })
-    await expect(
-      transport.fetchInbound('token', { since: '2026-10-01T00:00:00.000Z', ownAddress: 'a@b.test' })
-    ).rejects.toMatchObject({ failure: 'token_expired' })
+    await expect(transport.fetchInbound('token', { ...INPUT, cursor: null })).rejects.toMatchObject(
+      { failure: 'token_expired' }
+    )
   })
 })

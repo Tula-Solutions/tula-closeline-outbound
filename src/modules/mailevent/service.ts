@@ -1,6 +1,14 @@
-import { formatId, MAIL_ERRORS, type MailboxId, type OrganizationId } from 'tula-closeline-contract'
+import {
+  formatId,
+  MAIL_ERRORS,
+  type MailboxId,
+  type OrganizationId,
+  organizationIdSchema,
+} from 'tula-closeline-contract'
+import type { Handlers } from 'tula-closeline-kit/queue'
 import { describeError } from '~/describe-error'
 import { domainError } from '~/http/domain-error'
+import { type OutboundEnvelope, registry } from '~/messages'
 import * as Mailboxes from '~/modules/mailbox/service'
 import type { InboundNotice } from '~/ports/mail-transport'
 import type { StoredSend } from '~/ports/send-store'
@@ -81,6 +89,8 @@ export async function ingest(
   }
   if (stopReason !== null) {
     await deps.enrollments.stop(organizationId, send.enrollmentId, stopReason, at, null)
+    // A reply, bounce or complaint ends the Prospect's other Enrollments too.
+    await deps.stopProspect(organizationId, send.prospectId, stopReason)
   }
 
   const inserted = await deps.log.record(organizationId, {
@@ -142,36 +152,37 @@ async function pauseForComplaint(
 }
 
 /**
- * Reads the Mailbox's inbox since it was last read and ingests each notice.
- * shortcut: at most one page (50) per poll, so a burst larger than that loses its older notices;
- * a queue-driven loop that follows the provider's history cursor replaces this.
+ * Reads one bounded step of the Mailbox's inbox from its stored cursor and ingests each notice.
+ * The cursor moves only when every notice was handled; otherwise this throws so the queue retries
+ * the same step (ingest is idempotent). `more` says the provider has further pages to read.
  */
 export async function pollMailbox(
   deps: MailEventDeps,
   organizationId: OrganizationId,
   mailboxId: MailboxId
-): Promise<number> {
+): Promise<{ handled: number; more: boolean }> {
   const record = await deps.mailboxes.store.find(organizationId, mailboxId)
   const transport = record && deps.mailboxes.transports[record.provider]
   if (!record || record.state === 'disconnected' || !transport) {
-    return 0
+    return { handled: 0, more: false }
   }
   const startedAt = deps.clock.now().toISOString()
   const accessToken = await Mailboxes.accessTokenFor(deps.mailboxes, organizationId, mailboxId)
-  const notices = await transport.fetchInbound(accessToken, {
-    since: record.lastSyncedAt ?? record.connectedAt,
+  const page = await transport.fetchInbound(accessToken, {
+    cursor: record.syncCursor,
+    since: record.connectedAt,
     ownAddress: record.address,
   })
   let handled = 0
-  let failed = false
-  for (const notice of notices) {
+  let failed = 0
+  for (const notice of page.notices) {
     try {
       if ((await ingest(deps, organizationId, mailboxId, notice)) === 'handled') {
         handled += 1
       }
     } catch (error) {
-      // One bad notice must not hide the rest; the cursor stays put so it is read again (ingest is idempotent).
-      failed = true
+      // One bad notice must not hide the rest.
+      failed += 1
       deps.logger.warn('mail notice failed', {
         organizationId,
         mailboxId,
@@ -179,10 +190,11 @@ export async function pollMailbox(
       })
     }
   }
-  if (!failed) {
-    await deps.mailboxes.store.markSynced(organizationId, mailboxId, startedAt)
+  if (failed > 0) {
+    throw new Error(`${failed} mail notice(s) failed; the cursor stays`)
   }
-  return handled
+  await deps.mailboxes.store.markSynced(organizationId, mailboxId, startedAt, page.cursor)
+  return { handled, more: page.more }
 }
 
 /** The claims of a genuine, unexpired token; otherwise `unsubscribe.invalid_token` without saying which. */
@@ -231,6 +243,7 @@ export async function unsubscribe(
   )
   const stopped =
     enrollment && (await deps.enrollments.stop(org, enrollment.id, 'unsubscribed', at, null))
+  await deps.stopProspect(org, claims.prospectId, 'unsubscribed')
   const last = enrollment && (await deps.sends.lastOfEnrollment(org, enrollment.id))
   const inserted = last
     ? await deps.log.record(org, {
@@ -258,4 +271,42 @@ export async function unsubscribe(
     })
   }
   return { status: 'unsubscribed' as const, organizationName: SENDER_LABEL }
+}
+
+/** Queues one `mail.poll` for a Mailbox; the caller is a webhook, which never reads the inbox itself. */
+export async function enqueuePoll(
+  deps: MailEventDeps,
+  organizationId: OrganizationId,
+  mailboxId: MailboxId
+): Promise<void> {
+  await deps.queue.publish(
+    registry.create({
+      type: 'mail.poll',
+      payload: { mailboxId },
+      traceId: crypto.randomUUID(),
+      organizationId,
+    })
+  )
+}
+
+/** The queue handlers of the mail event module: read a step, and queue the next while there is more. */
+export function mailEventHandlers(deps: MailEventDeps): Handlers<OutboundEnvelope> {
+  return {
+    'mail.poll': async (message, context) => {
+      const organizationId = organizationIdSchema.parse(context.organizationId)
+      const mailboxId = message.payload.mailboxId as MailboxId
+      const { more } = await pollMailbox(deps, organizationId, mailboxId)
+      if (more) {
+        // A refused publish throws, so the queue delivers this step again from the same cursor.
+        await deps.queue.publish(
+          registry.create({
+            type: 'mail.poll',
+            payload: { mailboxId },
+            traceId: message.traceId,
+            organizationId,
+          })
+        )
+      }
+    },
+  }
 }

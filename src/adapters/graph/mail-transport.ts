@@ -5,6 +5,7 @@ import {
   type ConnectedAccount,
   type GrantTokens,
   type InboundNotice,
+  type InboundPage,
   type MailTransport,
   MailTransportError,
   type SentMessage,
@@ -252,9 +253,9 @@ export function createGraphMailTransport(options: GraphMailTransportOptions): Ma
       return { providerMessageId: id, threadId: field(draft.body, 'conversationId') ?? id }
     },
 
-    async fetchInbound(accessToken, { since, ownAddress }) {
+    async fetchInbound(accessToken, { cursor, since, ownAddress }): Promise<InboundPage> {
       const query = new URLSearchParams({
-        $filter: `receivedDateTime ge ${new Date(since).toISOString()}`,
+        $filter: `receivedDateTime ge ${new Date(cursor ?? since).toISOString()}`,
         $orderby: 'receivedDateTime asc',
         $top: String(INBOUND_PAGE_SIZE),
         $select: 'id,conversationId,receivedDateTime,subject,from,internetMessageHeaders',
@@ -272,7 +273,8 @@ export function createGraphMailTransport(options: GraphMailTransportOptions): Ma
         throw new MailTransportError('rejected', status)
       }
       const notices: InboundNotice[] = []
-      for (const item of items.slice(0, INBOUND_PAGE_SIZE)) {
+      const page = items.slice(0, INBOUND_PAGE_SIZE)
+      for (const item of page) {
         const id = field(item, 'id')
         const received = field(item, 'receivedDateTime')
         if (id === undefined || received === undefined) {
@@ -305,7 +307,17 @@ export function createGraphMailTransport(options: GraphMailTransportOptions): Ma
           })
         }
       }
-      return notices
+      // The cursor is the newest time read (`ge` re-reads that message, which ingest tolerates).
+      // shortcut: a full page of messages with one identical timestamp would never advance; Graph times have sub-second precision, so upgrade only if seen.
+      const newest = page.reduce<string | undefined>((latest, item) => {
+        const at = field(item, 'receivedDateTime')
+        return at !== undefined && (latest === undefined || at > latest) ? at : latest
+      }, undefined)
+      return {
+        notices,
+        cursor: newest === undefined ? cursor : new Date(newest).toISOString(),
+        more: items.length >= INBOUND_PAGE_SIZE,
+      }
     },
   }
 }

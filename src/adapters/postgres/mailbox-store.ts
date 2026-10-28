@@ -55,6 +55,7 @@ function recordOf(row: MailboxRow, limits: LimitsRow): MailboxRecord {
     rampStartedAt: row.rampStartedAt.toISOString(),
     connectedAt: row.connectedAt.toISOString(),
     lastSyncedAt: row.lastSyncedAt?.toISOString() ?? null,
+    syncCursor: row.syncCursor,
   }
 }
 
@@ -348,11 +349,11 @@ export function createPostgresMailboxStore(inOrganization: InOrganization): Mail
         return { record, before: current.state, changed: true }
       }),
 
-    markSynced: (organizationId, id, at) =>
+    markSynced: (organizationId, id, at, cursor) =>
       inOrganization(organizationId, async (tx) => {
         await tx
           .update(mailboxes)
-          .set({ lastSyncedAt: new Date(at) })
+          .set({ lastSyncedAt: new Date(at), syncCursor: cursor })
           .where(and(eq(mailboxes.organizationId, organizationId), eq(mailboxes.id, id)))
       }),
 

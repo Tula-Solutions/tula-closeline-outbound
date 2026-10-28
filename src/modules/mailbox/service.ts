@@ -364,6 +364,7 @@ export async function completeConnect(
     rampStartedAt: at,
     connectedAt: at,
     lastSyncedAt: null,
+    syncCursor: null,
   }
   const result = await deps.store.connect(caller.organizationId, record, tokens)
   if (result.kind === 'already_connected') {

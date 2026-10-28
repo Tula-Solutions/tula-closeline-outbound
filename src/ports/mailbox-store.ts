@@ -36,6 +36,8 @@ export type MailboxRecord = {
   rampStartedAt: string
   connectedAt: string
   lastSyncedAt: string | null
+  /** Where reading the inbox resumes: the provider's own cursor, opaque to the service. */
+  syncCursor: string | null
 }
 
 /** The sealed tokens of one Mailbox. Both are sealed under `keyId`; a plain token never reaches a store. */
@@ -138,8 +140,13 @@ export type MailboxStore = {
     reason: 'complaint_spike' | 'bounce_spike',
     at: string
   ) => Promise<{ record: MailboxRecord; before: MailboxState; changed: boolean } | null>
-  /** Records when the inbox was last read, so the next read starts there. */
-  markSynced: (organizationId: OrganizationId, id: MailboxId, at: string) => Promise<void>
+  /** Records when the inbox was last read and the cursor the next read resumes from. */
+  markSynced: (
+    organizationId: OrganizationId,
+    id: MailboxId,
+    at: string,
+    cursor: string | null
+  ) => Promise<void>
   /** Records a connect attempt; a repeat of the same `stateHash` changes nothing. */
   registerAttempt: (organizationId: OrganizationId, attempt: StoredAttempt) => Promise<void>
   /**

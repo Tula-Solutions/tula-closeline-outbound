@@ -69,7 +69,7 @@ import type { AppEnv } from '~/http/types'
 import { SERVICE } from '~/info'
 import { type OutboundDefinition, registry } from '~/messages'
 import { campaignHandlers } from '~/modules/campaign/audience'
-import { engineHandlers } from '~/modules/engine/service'
+import { engineHandlers, stopForProspect } from '~/modules/engine/service'
 import { enrichmentHandlers } from '~/modules/enrichment/handlers'
 import {
   defaultSendSettings,
@@ -78,6 +78,7 @@ import {
 } from '~/modules/linkedin/deps'
 import type { MailboxStateChanged } from '~/modules/mailbox/deps'
 import type { MailEvent } from '~/modules/mailevent/deps'
+import { mailEventHandlers } from '~/modules/mailevent/service'
 import type { SignalDeps, SignalEvent } from '~/modules/signal/deps'
 
 /** The issuer and audience the test environment's tokens carry. */
@@ -295,6 +296,9 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     clock: time.clock,
     logger,
     secret: env.MAIL_STATE_SECRET,
+    queue,
+    stopProspect: (organizationId, prospectId, reason) =>
+      stopForProspect(engine, organizationId, prospectId, reason),
     publish: async (organizationId, event) => {
       inboundEvents.push({ organizationId, event })
     },
@@ -385,6 +389,7 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
         ...enrichmentHandlers(enrichment),
         ...campaignHandlers(campaigns),
         ...engineHandlers(engine),
+        ...mailEventHandlers(inboundMail),
       },
       concurrency: overrides.consumerConcurrency ?? env.CONSUMER_CONCURRENCY,
       sleep: time.sleep,

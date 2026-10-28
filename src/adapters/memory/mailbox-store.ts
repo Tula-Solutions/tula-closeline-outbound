@@ -132,10 +132,10 @@ export function createMemoryMailboxStore(): MailboxStore {
       return { record: entry.record, before, changed: true }
     },
 
-    async markSynced(organizationId, id, at) {
+    async markSynced(organizationId, id, at, cursor) {
       const entry = entries.get(key(organizationId, id))
       if (entry !== undefined) {
-        entry.record = { ...entry.record, lastSyncedAt: at }
+        entry.record = { ...entry.record, lastSyncedAt: at, syncCursor: cursor }
       }
     },
 

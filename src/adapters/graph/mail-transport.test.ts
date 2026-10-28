@@ -479,7 +479,8 @@ describe('Graph fetchInbound', () => {
       },
       sleep: async () => undefined,
     })
-    const notices = await transport.fetchInbound('token', {
+    const { notices, cursor, more } = await transport.fetchInbound('token', {
+      cursor: null,
       since: '2026-10-01T00:00:00.000Z',
       ownAddress: 'rep@us.test',
     })
@@ -488,6 +489,8 @@ describe('Graph fetchInbound', () => {
       ['g2', 'c2', 'complaint'],
       ['g3', 'c3', 'out_of_office'],
     ])
+    expect(more).toBe(false)
+    expect(cursor).not.toBeNull()
     expect(decodeURIComponent(urls[0] ?? '')).toContain('$select=id,conversationId')
     expect(urls[0]).not.toContain('body')
   })

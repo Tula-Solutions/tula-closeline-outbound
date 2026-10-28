@@ -64,13 +64,14 @@ import type { BrandVoiceDeps } from '~/modules/brand-voice/deps'
 import { campaignHandlers } from '~/modules/campaign/audience'
 import type { CampaignDeps } from '~/modules/campaign/deps'
 import type { EngineDeps } from '~/modules/engine/deps'
-import { engineHandlers } from '~/modules/engine/service'
+import { engineHandlers, stopForProspect } from '~/modules/engine/service'
 import type { EnrichmentDeps } from '~/modules/enrichment/deps'
 import { enrichmentHandlers } from '~/modules/enrichment/handlers'
 import type { FitDeps } from '~/modules/fit/deps'
 import { defaultSendSettings, type LinkedinDeps } from '~/modules/linkedin/deps'
 import type { MailboxDeps } from '~/modules/mailbox/deps'
 import type { MailEventDeps } from '~/modules/mailevent/deps'
+import { mailEventHandlers } from '~/modules/mailevent/service'
 import type { SendDeps } from '~/modules/send/deps'
 import type { SignalDeps } from '~/modules/signal/deps'
 import type { Model } from '~/ports/model'
@@ -429,6 +430,9 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     clock: systemClock,
     logger,
     secret: env.MAIL_STATE_SECRET,
+    queue,
+    stopProspect: (organizationId, prospectId, reason) =>
+      stopForProspect(engine, organizationId, prospectId, reason),
     // There is no event bus in this service yet; the event is logged (ids only) until one exists.
     publish: async (organizationId, event) => {
       logger.info(event.name, { organizationId, ...event.payload })
@@ -503,6 +507,7 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
       ...enrichmentHandlers(enrichment),
       ...campaignHandlers(campaigns),
       ...engineHandlers(engine),
+      ...mailEventHandlers(inboundMail),
     },
     concurrency: env.CONSUMER_CONCURRENCY,
   })

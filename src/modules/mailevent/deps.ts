@@ -1,4 +1,6 @@
-import type { Clock, Logger } from 'tula-closeline-kit'
+import type { Enrollment, OrganizationId, ProspectId } from 'tula-closeline-contract'
+import type { Clock, Logger, Queue } from 'tula-closeline-kit'
+import type { OutboundEnvelope } from '~/messages'
 import type { MailboxDeps } from '~/modules/mailbox/deps'
 import type { CoreProspects } from '~/ports/core'
 import type { CoreSuppression } from '~/ports/core-suppression'
@@ -50,6 +52,14 @@ export type MailEventDeps = {
   logger: Logger
   /** Signs the unsubscribe token and the webhook state (the `MAIL_STATE_SECRET`). */
   secret: string
+  /** Stops every active Enrollment of a Prospect (the Sequence engine's `stopForProspect`). */
+  stopProspect: (
+    organizationId: OrganizationId,
+    prospectId: ProspectId,
+    reason: NonNullable<Enrollment['stopReason']>
+  ) => Promise<number>
+  /** Carries `mail.poll`: a webhook only enqueues, the consumer reads the inbox. */
+  queue: Queue<OutboundEnvelope>
   /** Publishes an event for the Organization. */
   publish: (organizationId: string, event: MailEvent) => Promise<void>
 }

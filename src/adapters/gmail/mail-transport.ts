@@ -5,6 +5,7 @@ import {
   type ConnectedAccount,
   type GrantTokens,
   type InboundNotice,
+  type InboundPage,
   type MailTransport,
   MailTransportError,
   type OutgoingMessage,
@@ -306,41 +307,119 @@ export function createGmailMailTransport(options: GmailMailTransportOptions): Ma
       return { providerMessageId: id, threadId: field(body, 'threadId') ?? id }
     },
 
-    async fetchInbound(accessToken, { since, ownAddress }) {
-      const root = `${options.apiBaseUrl.replace(/\/$/, '')}/gmail/v1/users/me/messages`
+    async fetchInbound(accessToken, { cursor, since, ownAddress }): Promise<InboundPage> {
+      const api = `${options.apiBaseUrl.replace(/\/$/, '')}/gmail/v1/users/me`
       const headers = { authorization: `Bearer ${accessToken}`, accept: 'application/json' }
-      const read = async (url: string) => {
+      const read = async (url: string): Promise<{ status: number; body: unknown }> => {
         const { status, body } = await call(url, { method: 'GET', headers }, retryAlways)
         if (status === 401) {
           throw new MailTransportError('token_expired', status)
         }
+        return { status, body }
+      }
+      const readOk = async (url: string): Promise<unknown> => {
+        const { status, body } = await read(url)
         if (status !== 200) {
           throw new MailTransportError('rejected', status)
         }
         return body
       }
-      const after = Math.floor(new Date(since).getTime() / 1000)
-      const list = await read(
-        `${root}?${new URLSearchParams({ q: `in:inbox after:${after}`, maxResults: String(INBOUND_PAGE_SIZE) })}`
-      )
-      const ids = (
-        typeof list === 'object' &&
+      const idsOf = (list: unknown, key: string): string[] =>
+        (typeof list === 'object' &&
         list !== null &&
-        Array.isArray((list as { messages?: unknown }).messages)
-          ? ((list as { messages: unknown[] }).messages as unknown[])
+        Array.isArray((list as Record<string, unknown>)[key])
+          ? ((list as Record<string, unknown[]>)[key] as unknown[])
           : []
-      )
-        .map((m) => field(m, 'id'))
-        .filter((id): id is string => id !== undefined)
-        .slice(0, INBOUND_PAGE_SIZE)
+        )
+          .map((m) => field(m, 'id'))
+          .filter((id): id is string => id !== undefined)
+
+      /** One bounded listing of the inbox since the Mailbox was connected. */
+      const listing = async (historyId: string, pageToken: string | undefined) => {
+        const query = new URLSearchParams({
+          q: `in:inbox after:${Math.floor(new Date(since).getTime() / 1000)}`,
+          maxResults: String(INBOUND_PAGE_SIZE),
+        })
+        if (pageToken !== undefined) {
+          query.set('pageToken', pageToken)
+        }
+        const list = await readOk(`${api}/messages?${query}`)
+        const next = field(list, 'nextPageToken')
+        return {
+          ids: idsOf(list, 'messages'),
+          cursor: next === undefined ? historyId : `list:${historyId}:${next}`,
+          more: next !== undefined,
+        }
+      }
+
+      let step: { ids: string[]; cursor: string; more: boolean }
+      if (cursor?.startsWith('list:')) {
+        const [, historyId = '', ...token] = cursor.split(':')
+        step = await listing(historyId, token.join(':'))
+      } else {
+        let history: unknown
+        if (cursor !== null && cursor !== undefined) {
+          const query = new URLSearchParams({
+            startHistoryId: cursor,
+            historyTypes: 'messageAdded',
+            labelId: 'INBOX',
+            maxResults: '100',
+          })
+          const res = await read(`${api}/history?${query}`)
+          if (res.status === 200) {
+            history = res.body
+          } else if (res.status !== 404) {
+            throw new MailTransportError('rejected', res.status)
+          }
+        }
+        if (history === undefined) {
+          // First read, or a history id Gmail no longer keeps: list the inbox again.
+          const profile = await readOk(`${api}/profile`)
+          step = await listing(field(profile, 'historyId') ?? '0', undefined)
+        } else {
+          const records =
+            typeof history === 'object' &&
+            history !== null &&
+            Array.isArray((history as { history?: unknown }).history)
+              ? ((history as { history: unknown[] }).history as unknown[])
+              : []
+          const ids = new Set<string>()
+          for (const record of records) {
+            const added = (record as { messagesAdded?: unknown }).messagesAdded
+            for (const item of Array.isArray(added) ? added : []) {
+              const id = field((item as { message?: unknown }).message, 'id')
+              if (id !== undefined) {
+                ids.add(id)
+              }
+            }
+          }
+          const more = field(history, 'nextPageToken') !== undefined
+          // Cut short: stop at the last record read, so the next run resumes right after it.
+          const last = field(records[records.length - 1], 'id')
+          step = {
+            ids: [...ids],
+            cursor: more ? (last ?? cursor ?? '0') : (field(history, 'historyId') ?? cursor ?? '0'),
+            more,
+          }
+        }
+      }
+
       const notices: InboundNotice[] = []
-      // shortcut: one metadata call per message (at most 50 a poll); use a batch call if polling gets hot.
-      for (const id of ids) {
+      // shortcut: one metadata call per message (at most ~100 a run); use a batch call if polling gets hot.
+      for (const id of step.ids) {
         const query = new URLSearchParams({ format: 'metadata' })
         for (const name of ['From', 'Subject', 'Content-Type', 'Auto-Submitted']) {
           query.append('metadataHeaders', name)
         }
-        const message = await read(`${root}/${encodeURIComponent(id)}?${query}`)
+        const { status, body: message } = await read(
+          `${api}/messages/${encodeURIComponent(id)}?${query}`
+        )
+        if (status === 404) {
+          continue // deleted before we read it
+        }
+        if (status !== 200) {
+          throw new MailTransportError('rejected', status)
+        }
         const raw =
           typeof message === 'object' && message !== null
             ? ((message as { payload?: { headers?: unknown } }).payload?.headers ?? [])
@@ -370,7 +449,8 @@ export function createGmailMailTransport(options: GmailMailTransportOptions): Ma
           })
         }
       }
-      return notices.sort((a, b) => a.receivedAt.localeCompare(b.receivedAt))
+      notices.sort((a, b) => a.receivedAt.localeCompare(b.receivedAt))
+      return { notices, cursor: step.cursor, more: step.more }
     },
   }
 }

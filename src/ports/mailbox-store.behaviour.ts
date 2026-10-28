@@ -40,6 +40,7 @@ export function newMailboxRecord(overrides: Partial<MailboxRecord> = {}): Mailbo
     rampStartedAt: at,
     connectedAt: at,
     lastSyncedAt: null,
+    syncCursor: null,
     ...overrides,
   }
 }
@@ -137,8 +138,10 @@ export function describeMailboxStore(label: string, make: () => MailboxStore): v
       const again = await store.pause(o, record.id, 'bounce_spike', '2026-01-03T00:00:00.000Z')
       expect(again?.changed).toBe(false)
       expect(again?.record.stateReason).toBe('complaint_spike')
-      await store.markSynced(o, record.id, '2026-01-04T00:00:00.000Z')
-      expect((await store.find(o, record.id))?.lastSyncedAt).toBe('2026-01-04T00:00:00.000Z')
+      await store.markSynced(o, record.id, '2026-01-04T00:00:00.000Z', 'cursor-1')
+      const synced = await store.find(o, record.id)
+      expect(synced?.lastSyncedAt).toBe('2026-01-04T00:00:00.000Z')
+      expect(synced?.syncCursor).toBe('cursor-1')
       expect(
         await store.pause(
           o,

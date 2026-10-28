@@ -120,7 +120,7 @@ async function world(organizationId: OrganizationId = newOrganizationId()) {
       receivedAt: t.deps.clock.now().toISOString(),
     })
     t.deps.clock.advance('1m')
-    return MailEvents.pollMailbox(t.deps.inboundMail, organizationId, mailboxId)
+    return (await MailEvents.pollMailbox(t.deps.inboundMail, organizationId, mailboxId)).handled
   }
   const enrollment = (id: EnrollmentId) => t.deps.campaigns.enrollments.find(organizationId, id)
   const token = (prospectId: ProspectId, at: OrganizationId = organizationId) =>
@@ -204,7 +204,9 @@ describe('mail events', () => {
       receivedAt: w.t.deps.clock.now().toISOString(),
     })
     w.t.deps.clock.advance('1m')
-    await MailEvents.pollMailbox(deps, w.organizationId, w.mailboxId)
+    await expect(MailEvents.pollMailbox(deps, w.organizationId, w.mailboxId)).rejects.toThrow(
+      'the cursor stays'
+    )
     expect(w.t.deps.suppression.suppressed(w.organizationId)).toEqual([])
     down = false
     w.t.deps.clock.advance('1m')
@@ -377,8 +379,50 @@ describe('unsubscribe', () => {
   })
 })
 
+describe('the Sequence engine', () => {
+  test('a reply and an unsubscribe end the Prospect in every Campaign, not only the one that sent', async () => {
+    const w = await world()
+    const other = async (prospectId: ProspectId) => {
+      const id = formatId('enr', crypto.randomUUID()) as EnrollmentId
+      const now = w.t.deps.clock.now().toISOString()
+      await w.t.deps.campaigns.enrollments.insertIfAbsent(
+        w.organizationId,
+        {
+          id,
+          campaignId: formatId('cpg', crypto.randomUUID()) as CampaignId,
+          prospectId,
+          attemptEpoch: 0,
+          enrolledAt: now,
+          completedAt: null,
+          state: 'active',
+          stopReason: null,
+          currentStepKey: 'step-1',
+          currentStep: 0,
+          nextDueAt: now,
+          stoppedAt: null,
+        },
+        []
+      )
+      return id
+    }
+    const p = await w.prospect()
+    const second = await other(p.prospectId)
+    await w.arrives(p.threadId, 'reply')
+    expect((await w.enrollment(second))?.stopReason).toBe('replied')
+    const q = await w.prospect()
+    const third = await other(q.prospectId)
+    await MailEvents.unsubscribe(w.t.deps.inboundMail, w.token(q.prospectId), 'link')
+    expect((await w.enrollment(third))?.stopReason).toBe('unsubscribed')
+  })
+})
+
 describe('webhooks', () => {
-  test('Gmail: a genuine state reads the Mailbox; a missing or forged one is 401', async () => {
+  /** Runs the queue until it has nothing left. */
+  const drain = async (w: Awaited<ReturnType<typeof world>>) => {
+    for (let i = 0; i < 10 && (await w.t.deps.consumer.pollOnce()) > 0; i++) {}
+  }
+
+  test('Gmail: a genuine state only queues a poll (nothing is read on the request); a missing or forged one is 401', async () => {
     const w = await world()
     const p = await w.prospect()
     w.t.deps.mail.receive({
@@ -393,8 +437,62 @@ describe('webhooks', () => {
     const bad = await w.t.app.request(`${url}?state=${state.slice(0, -2)}xx`, { method: 'POST' })
     const none = await w.t.app.request(url, { method: 'POST' })
     expect([bad.status, none.status]).toEqual([401, 401])
+    expect(w.t.deps.queue.depth().visible).toBe(0)
     const ok = await w.t.app.request(`${url}?state=${state}`, { method: 'POST', body: '{}' })
     expect(ok.status).toBe(204)
+    expect((await w.enrollment(p.enrollmentId))?.state).toBe('active')
+    expect(w.t.deps.queue.depth().visible).toBe(1)
+    await drain(w)
+    expect((await w.enrollment(p.enrollmentId))?.stopReason).toBe('replied')
+  })
+
+  test('a long inbox is read a bounded page at a time, the queue carrying on until it is done', async () => {
+    const w = await world()
+    const p = await w.prospect()
+    for (let i = 0; i < 120; i++) {
+      w.t.deps.mail.receive({
+        providerMessageId: `other-${i}`,
+        threadId: `unrelated-${i}`,
+        kind: 'reply',
+        receivedAt: w.t.deps.clock.now().toISOString(),
+      })
+    }
+    w.t.deps.mail.receive({
+      providerMessageId: 'late',
+      threadId: p.threadId,
+      kind: 'reply',
+      receivedAt: w.t.deps.clock.now().toISOString(),
+    })
+    w.t.deps.clock.advance('1m')
+    await MailEvents.enqueuePoll(w.t.deps.inboundMail, w.organizationId, w.mailboxId)
+    await w.t.deps.consumer.pollOnce()
+    expect((await w.enrollment(p.enrollmentId))?.state).toBe('active')
+    await drain(w)
+    expect((await w.enrollment(p.enrollmentId))?.stopReason).toBe('replied')
+  })
+
+  test('a poll that fails is retried from the same cursor and loses nothing', async () => {
+    const w = await world()
+    const p = await w.prospect()
+    w.t.deps.mail.receive({
+      providerMessageId: 'msg-retry',
+      threadId: p.threadId,
+      kind: 'reply',
+      receivedAt: w.t.deps.clock.now().toISOString(),
+    })
+    w.t.deps.clock.advance('1m')
+    const deps = w.t.deps.inboundMail
+    const real = deps.stopProspect
+    let down = true
+    deps.stopProspect = async (...args) => {
+      if (down) {
+        throw new Error('engine down')
+      }
+      return real(...args)
+    }
+    await expect(MailEvents.pollMailbox(deps, w.organizationId, w.mailboxId)).rejects.toThrow()
+    down = false
+    await MailEvents.pollMailbox(deps, w.organizationId, w.mailboxId)
     expect((await w.enrollment(p.enrollmentId))?.stopReason).toBe('replied')
   })
 
