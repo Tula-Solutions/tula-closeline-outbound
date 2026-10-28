@@ -319,11 +319,12 @@ export async function acceptRisk(
 /** Revokes the active acceptance; with none it changes nothing. Sends stop at their next channel check. */
 export async function revokeRisk(deps: LinkedinDeps, caller: LinkedinCaller): Promise<void> {
   const at = deps.clock.now().toISOString()
+  // Looked up first: a failure here must leave nothing revoked, or a retry would lose the event.
+  const me = await deps.access.membershipIdOf(caller.organizationId, caller.userId)
   const revoked = await deps.store.revokeRisk(caller.organizationId, at)
   if (revoked === 0) {
     return
   }
-  const me = await deps.access.membershipIdOf(caller.organizationId, caller.userId)
   deps.logger.info('linkedin.risk_revoked', { organizationId: caller.organizationId })
   await publishDisabled(deps, caller.organizationId, {
     reason: 'acceptance_revoked',

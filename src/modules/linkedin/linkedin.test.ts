@@ -8,7 +8,7 @@ import {
   type TestApp,
   type TestIdentity,
 } from '~/testing'
-import { assertChannelOpen, completeConnection } from './service'
+import { assertChannelOpen, completeConnection, revokeRisk } from './service'
 
 type Reply = { status: number; body: Record<string, unknown> }
 
@@ -350,5 +350,30 @@ describe('linkedin risk acceptance and the channel switch', () => {
     // Revoking in the other Organization leaves the first one open.
     await w.call('DELETE', '/v1/linkedin/risk-acceptance', theirAdmin)
     await expect(assertChannelOpen(w.t.deps.linkedin, w.org)).resolves.toBeUndefined()
+  })
+
+  test('a failed membership lookup revokes nothing, so a retry still publishes the event', async () => {
+    const w = await fresh()
+    await accept(w, w.admin)
+    await patch(w, w.admin, true)
+    const real = w.t.deps.linkedin
+    let failures = 1
+    const flaky = {
+      ...real,
+      access: {
+        ...real.access,
+        membershipIdOf: (...args: Parameters<typeof real.access.membershipIdOf>) => {
+          if (failures-- > 0) {
+            return Promise.reject(new Error('core unavailable'))
+          }
+          return real.access.membershipIdOf(...args)
+        },
+      },
+    }
+    const caller = { organizationId: w.org, userId: w.admin.userId, role: 'admin' as const }
+    await expect(revokeRisk(flaky, caller)).rejects.toThrow('core unavailable')
+    await expect(assertChannelOpen(real, w.org)).resolves.toBeUndefined()
+    await revokeRisk(flaky, caller)
+    expect(w.t.deps.linkedinEvents.map((e) => e.event.reason)).toEqual(['acceptance_revoked'])
   })
 })
