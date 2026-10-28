@@ -53,7 +53,8 @@ outside `local`; the adapter is `src/adapters/http/core.ts`), `CORE_CALL_TIMEOUT
 `GRAPH_API_BASE_URL`,
 `MAIL_OAUTH_REDIRECT_URI`, `MAIL_STATE_SECRET` (required outside `local`), `MAIL_SECRET_BOX_KEY`
 (a local-only key, refused in staging and prod), `MAIL_CALL_TIMEOUT_MS`, `MAIL_CALL_MAX_TRIES`,
-`MAIL_RETRY_BASE_MS`. Add a key in both files.
+`MAIL_RETRY_BASE_MS`, and for enrichment vendors `APOLLO_BASE_URL`, `ZEROBOUNCE_BASE_URL`,
+`PROVIDER_CIRCUIT_FAILURES`, `PROVIDER_CIRCUIT_OPEN_MS`. Add a key in both files.
 
 ## Campaigns (`src/modules/campaign`)
 
@@ -130,6 +131,24 @@ Draft names the exact version it used. The body is checked by the service, not t
 empty or oversized value, an unknown field or a banned phrase that is also preferred answers
 `voice.invalid`. A repeat of the last save answers that version. The contract and database have no
 default-language field, so there is none yet.
+
+## Enrichment providers and settings (`src/adapters/providers`, `src/modules/enrichment/settings*.ts`)
+
+Apollo (person, company) and ZeroBounce (email verifier) are the two adapters. Each takes an
+injected `fetch`, so the contract tests in `providers.test.ts` run on fixtures with no network; the
+live tests there run only when `APOLLO_LIVE_KEY` / `ZEROBOUNCE_LIVE_KEY` are set. An adapter never
+retries: the waterfall's `callWithRetry` owns timeout and retry. Errors carry fixed words, never a
+URL or vendor text (ZeroBounce takes its key in the query string). `circuit.ts` opens after
+`PROVIDER_CIRCUIT_FAILURES` consecutive outage-like failures per provider and lets one trial through
+after `PROVIDER_CIRCUIT_OPEN_MS`; a rejected key does not count. It is in this process, not shared.
+
+Settings routes: `GET /v1/enrichment/providers`, `PUT /v1/enrichment/providers/{provider}` (key is
+write-only, sealed by the secret box bound to Organization and provider; omitted keeps, null removes),
+`GET`/`PUT /v1/enrichment/waterfall`. The db has no version column, so the waterfall `version` is
+derived from the stored order (0 while none is stored); a stale `expectedVersion` is
+`enrichment.version_conflict`, and a replay of the same order is accepted. Outside `local` the
+secret box needs `MAIL_SECRET_BOX_KEY`-style configuration; unconfigured, setting a key answers
+`server.unavailable`.
 
 ## Hot paths
 

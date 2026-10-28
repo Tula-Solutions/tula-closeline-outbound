@@ -7,6 +7,10 @@ export type EnrichmentRouteName =
   | 'getEnrichmentRunSet'
   | 'getEnrichmentRun'
   | 'listEnrichmentRuns'
+  | 'listEnrichmentProviders'
+  | 'setEnrichmentProvider'
+  | 'getEnrichmentWaterfall'
+  | 'setEnrichmentWaterfall'
 
 const ALL_ERRORS: Record<string, { code: string; status: number }> = {
   ...ERRORS,
@@ -20,7 +24,7 @@ const ALWAYS = ['auth.unauthenticated', 'server.internal'] as const
 export function contractRoute(name: EnrichmentRouteName) {
   const route = ENRICHMENT_ROUTES[name]
   return {
-    method: route.method.toLowerCase() as 'get' | 'post',
+    method: route.method.toLowerCase() as 'get' | 'post' | 'put',
     path: route.path,
     description: route.description,
   }
