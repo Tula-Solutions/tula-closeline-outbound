@@ -199,6 +199,9 @@ export async function ensureBrief(
 ): Promise<ResearchBrief> {
   const earlier = await deps.store.byRequestKey(organizationId, idempotencyKey)
   if (earlier !== null) {
+    if (earlier.prospectId !== prospectId) {
+      throw domainError(ERRORS['request.idempotency_key_reused'])
+    }
     return earlier
   }
   return (await buildBrief(deps, organizationId, prospectId, { refresh: false, idempotencyKey }))

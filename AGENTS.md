@@ -192,7 +192,8 @@ Logs carry ids and counts only.
 - `POST /v1/outreach-drafts` writes a Draft from the Prospect, the Research Brief (`Research.ensureBrief`),
   the Brand Voice and the Organization's Playbook passages; `GET /v1/outreach-drafts/{draftId}`;
   `POST /v1/outreach-drafts/{draftId}/regenerate` (new angle or tone; the revision rises). The edit and
-  list routes are not built yet.
+  list routes are not built yet. A variant Draft does not keep its variant angle on regenerate (the angle is
+  not stored): pass `angle`, or the Brief angle is used.
 - The model, Playbook and limits are the research module's (`ai.model`, `researchLimits`); the adapter owns
   retries. Sources the model may cite get ids `c1..`; guidance (voice, goal, angle, company) gets `ctx-` ids
   and can never be cited. A claim naming another id counts toward `citations_resolve`.

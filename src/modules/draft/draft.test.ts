@@ -211,6 +211,19 @@ describe('grounded Draft', () => {
     expect(codeOf(other.body)).toBe('request.idempotency_key_reused')
   })
 
+  test('a key whose Brief survived a failed Draft is not reusable for another Prospect', async () => {
+    const w = await world()
+    const a = w.seed(w.admin)
+    const b = w.seed(w.admin)
+    w.t.deps.researchModel.script(undefined) // the Brief is built and saved
+    w.t.deps.researchModel.script(new Error('model down')) // the Draft fails
+    const failed = await w.draft(w.admin, { prospectId: a }, 'key-bbbbbbbbbbbbbbbb')
+    expect(failed.status).toBeGreaterThanOrEqual(500)
+    const other = await w.draft(w.admin, { prospectId: b }, 'key-bbbbbbbbbbbbbbbb')
+    expect(other.status).toBe(422)
+    expect(codeOf(other.body)).toBe('request.idempotency_key_reused')
+  })
+
   test('regenerate raises the revision once per key', async () => {
     const w = await world()
     const first = await w.draft(w.admin, { prospectId: w.seed(w.admin) })
