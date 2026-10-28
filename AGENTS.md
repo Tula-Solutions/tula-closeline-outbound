@@ -132,6 +132,32 @@ empty or oversized value, an unknown field or a banned phrase that is also prefe
 `voice.invalid`. A repeat of the last save answers that version. The contract and database have no
 default-language field, so there is none yet.
 
+## Send
+
+`modules/send/service.ts` `send(deps, org, request)` decides and sends one email. The request
+carries what the caller resolved (Campaign, Prospect, key `enrollmentId:step:attemptEpoch`,
+recipient and `verified`, Mailbox ids, subject and text); there is no Draft or Enrollment module
+to read from yet. Checks run in this order and each outcome is stored under the key in
+`mail_messages` before anything leaves: Campaign running, window (the Prospect's zone when
+`windowZone` says so), address verified, Contact Check (`guard`, email, `agent_initiated`;
+fails closed, no setting turns it off), a usable Mailbox, then the limits. A refusal or deferral
+returns the stored record and sends nothing; a settled key throws `send.duplicate`; a deferred
+key is decided again and keeps its row. `REASON_CODES` maps a reason to its error code.
+
+Limits: `SendStore.reserve` takes a per-Organization advisory lock, counts `sending` and `sent`
+rows (UTC day, clock hour) and inserts the `sending` row in one transaction, so parallel sends
+cannot pass a limit. Order: gap, hour, day, then `MAIL_ORG_DAILY_CAP` (Organization, no limits
+table yet). Rotation picks the Mailbox with the fewest sends today, then the longest idle; a
+follow-up stays on the first message's Mailbox and thread. Campaign `dailyCap` is not enforced.
+
+Failure: the provider is called after the row is `sending`. A timeout, or a failed settle, leaves
+the row `sending` (it still counts) and never sends again; `reconcile` settles rows older than
+ten minutes as `sent` with no provider ids, since the provider has no lookup. Any other provider
+error settles `failed`, final for the key (a retry needs a new `attemptEpoch`). Every message
+carries `List-Unsubscribe` (one-click) and a signed link from `MAIL_UNSUBSCRIBE_URL`
+(`unsubscribe.ts`, 30 days); the route behind it is not built. `GET /v1/mail/capacity` shows
+remaining sends and the next send time per Mailbox (`capacity.ts`). No internal `submitSend` HTTP
+route yet (no inbound shared-secret auth).
 ## Enrichment providers and settings (`src/adapters/providers`, `src/modules/enrichment/settings*.ts`)
 
 Apollo (person, company) and ZeroBounce (email verifier) are the two adapters. Each takes an

@@ -35,6 +35,7 @@ import { createPostgresEnrollmentStore } from '~/adapters/postgres/enrollment-st
 import { createPostgresLinkedinStore } from '~/adapters/postgres/linkedin-store'
 import { createPostgresMailboxStore } from '~/adapters/postgres/mailbox-store'
 import { createPostgresProviderConfig } from '~/adapters/postgres/provider-config'
+import { createPostgresSendStore } from '~/adapters/postgres/send-store'
 import { createPostgresEnrichmentStore } from '~/adapters/postgres/store'
 import { createApolloProvider } from '~/adapters/providers/apollo'
 import { createCircuit } from '~/adapters/providers/circuit'
@@ -51,6 +52,7 @@ import type { EnrichmentDeps } from '~/modules/enrichment/deps'
 import { enrichmentHandlers } from '~/modules/enrichment/handlers'
 import type { LinkedinDeps } from '~/modules/linkedin/deps'
 import type { MailboxDeps } from '~/modules/mailbox/deps'
+import type { SendDeps } from '~/modules/send/deps'
 import { trackerSafe } from '~/tracker-safe'
 
 /** One dependency probe for `/readyz`: resolve when healthy, reject or stall when not. */
@@ -94,6 +96,8 @@ export type Container = {
   brandVoice: BrandVoiceDeps
   /** Everything the mailbox module needs; its service functions take this first. */
   mailboxes: MailboxDeps
+  /** Everything the send pipeline needs. */
+  send: SendDeps
   /** Everything the LinkedIn module needs; its service functions take this first. */
   linkedin: LinkedinDeps
   /** The queue consumer; built here, started by `server.ts` and stopped on shutdown. */
@@ -337,6 +341,16 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     },
     logger,
   }
+  const send: SendDeps = {
+    store: createPostgresSendStore(inOrganization),
+    mailboxes,
+    campaigns: campaigns.store,
+    guard: campaigns.guard,
+    clock: systemClock,
+    logger,
+    unsubscribe: { secret: env.MAIL_STATE_SECRET, url: env.MAIL_UNSUBSCRIBE_URL },
+    organizationDailyCap: env.MAIL_ORG_DAILY_CAP,
+  }
   const consumer = createOutboundConsumer({
     queue,
     store: processed,
@@ -363,6 +377,7 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     campaigns,
     brandVoice,
     mailboxes,
+    send,
     linkedin,
     consumer,
     readinessChecks: [
