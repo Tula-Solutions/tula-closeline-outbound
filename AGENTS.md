@@ -160,8 +160,10 @@ builds a new one (201). The `Idempotency-Key` is stored on the Brief (`request_k
 Organization): a replay answers that Brief (200), the key for another Prospect is
 `request.idempotency_key_reused`, and of two racing requests one insert wins and the other answers
 its Brief. `BriefStore` is Postgres (`outbound.briefs`, `outbound.brief_statements`) with a memory
-twin for tests; `Model`, `WebSearch` and `PlaybookSearch` have memory adapters only (the vendor is
-undecided, #290): outside `local` the model is null and a Brief answers `draft.model_unavailable`.
+twin for tests; `Model` and `WebSearch` are the container's `ai` pair (Anthropic and Exa when `ANTHROPIC_API_KEY` /
+`EXA_API_KEY` are set, memory stand-ins in `local` otherwise; the model gets the Organization so its
+monthly budget applies, and a spent budget is `draft.budget_exceeded`, never retried). `PlaybookSearch`
+has a memory adapter only. With no model outside `local` a Brief answers `draft.model_unavailable`.
 Logs carry ids and counts only.
 
 ## Signals and fit (`src/modules/signal`, `src/modules/fit`)
