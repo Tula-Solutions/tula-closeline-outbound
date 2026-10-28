@@ -356,8 +356,40 @@ describe('send', () => {
     w.t.deps.mail.failProvider(1)
     const f = await w.ready([mailbox])
     await expect(send(failing, w.org, f)).rejects.toMatchObject({ code: 'server.unavailable' })
-    expect((await failing.store.find(w.org, `${f.key.enrollmentId}:0:0`))?.state).toBe('failed')
+    // A 5xx or dropped connection may follow a provider accept: unknown, so it never sends again.
+    expect((await failing.store.find(w.org, `${f.key.enrollmentId}:0:0`))?.state).toBe('sending')
     await expect(send(failing, w.org, f)).rejects.toMatchObject({ code: 'send.duplicate' })
+
+    w.t.deps.clock.advance('2m')
+    const refusing = w.depsOf({
+      send: async () => {
+        throw new MailTransportError('rejected', 400)
+      },
+    })
+    const g = await w.ready([mailbox])
+    await expect(send(refusing, w.org, g)).rejects.toMatchObject({
+      code: 'mailbox.oauth_state_invalid',
+    })
+    expect((await refusing.store.find(w.org, `${g.key.enrollmentId}:0:0`))?.state).toBe('failed')
+  })
+
+  test('a follow-up whose first Mailbox is paused is refused, not sent from another Mailbox', async () => {
+    const w = await world()
+    const a = await w.connect()
+    const b = await w.connect()
+    const first = await send(w.depsOf(), w.org, await w.ready([a, b]))
+    expect(first.state).toBe('sent')
+    w.t.deps.clock.advance('2m')
+    const paused = w.depsOf({
+      record: (m) => (m.id === first.mailboxId ? { ...m, state: 'paused' } : m),
+    })
+    const follow = await send(
+      paused,
+      w.org,
+      await w.ready([a, b], { key: { enrollmentId: first.enrollmentId, step: 1, attemptEpoch: 0 } })
+    )
+    expect(follow).toMatchObject({ state: 'refused', reason: 'mailbox_unavailable' })
+    expect(unsent(w)).toBe(1)
   })
 
   test('another Organization cannot use or see this one', async () => {

@@ -112,7 +112,17 @@ export function createPostgresSendStore(inOrganization: InOrganization): SendSto
         if (existing !== undefined && existing.state !== 'deferred') {
           return { kind: 'exists', send: storedOf(existing) }
         }
-        const counted = inArray(mailMessages.state, ['sending', 'sent'])
+        // Nothing older than the day or the min gap can change a decision: bound every scan by it.
+        const since = new Date(
+          Math.min(
+            Date.parse(limits.dayStart),
+            Date.parse(limits.now) - limits.minGapSeconds * 1000
+          )
+        )
+        const counted = and(
+          inArray(mailMessages.state, ['sending', 'sent']),
+          sql`${stamp} >= ${since}::timestamptz`
+        )
         const [own] = await tx
           .select({
             today: sql<number>`count(*) filter (where ${stamp} >= ${limits.dayStart}::timestamptz)::int`,
@@ -202,7 +212,8 @@ export function createPostgresSendStore(inOrganization: InOrganization): SendSto
           .where(
             and(
               eq(mailMessages.organizationId, organizationId),
-              inArray(mailMessages.state, ['sending', 'sent'])
+              inArray(mailMessages.state, ['sending', 'sent']),
+              sql`${stamp} >= ${dayStart}::timestamptz`
             )
           )
           .groupBy(mailMessages.mailboxId)

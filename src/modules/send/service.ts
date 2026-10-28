@@ -69,7 +69,11 @@ const LIMIT_REASONS = { organization_daily_cap: 'organization_cap_reached' } as 
 type Plan = { mailbox: MailboxRecord; today: number; lastAt: string | null }
 
 function isUnknownOutcome(error: unknown) {
-  return error instanceof AppError && error.code === 'server.timeout'
+  // A timeout, a 5xx or a dropped connection may follow a provider accept, so none may send again.
+  return (
+    error instanceof AppError &&
+    (error.code === 'server.timeout' || error.code === 'server.unavailable')
+  )
 }
 
 /**
@@ -244,7 +248,8 @@ async function planMailboxes(
   const previous = await deps.store.lastOfEnrollment(organizationId, request.key.enrollmentId)
   const sticky = records.find((r) => r.id === previous?.mailboxId)
   // A follow-up goes out from the Mailbox that sent the first message, so the thread stays whole.
-  const chosen = sticky === undefined ? records : [sticky]
+  // If that Mailbox is gone or stopped, nothing is sent: another Mailbox would split the thread.
+  const chosen = previous === null ? records : sticky === undefined ? [] : [sticky]
   const { dayStart, hourStart } = bucketsOf(now)
   const usage = await deps.store.usage(
     organizationId,
