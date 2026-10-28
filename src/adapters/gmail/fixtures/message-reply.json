@@ -1,0 +1,12 @@
+{
+  "id": "m-reply",
+  "threadId": "t-1",
+  "internalDate": "1790000000000",
+  "payload": {
+    "headers": [
+      { "name": "From", "value": "Ana <ana@prospect.test>" },
+      { "name": "Subject", "value": "Re: hello" },
+      { "name": "Content-Type", "value": "text/plain; charset=UTF-8" }
+    ]
+  }
+}

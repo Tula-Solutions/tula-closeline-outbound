@@ -398,7 +398,7 @@ describe('idempotency', () => {
     expect(second.status).toBe(200)
     expect((second.body as { id: string }).id).toBe((first.body as { id: string }).id)
     expect(provider.calls).toHaveLength(1)
-    const month = w.t.deps.clock.now().toISOString().slice(0, 7) + '-01'
+    const month = `${w.t.deps.clock.now().toISOString().slice(0, 7)}-01`
     const spent = [...w.t.deps.store.spendOf(w.organizationId, month).values()]
     expect(spent.reduce((sum, s) => sum + s.costMicros, 0)).toBe(10_000)
   })
@@ -613,7 +613,7 @@ describe('Organization isolation', () => {
     const list = await w.get('/v1/enrichment-runs', stranger)
     expect(list.status).toBe(200)
     expect(list.body.items).toEqual([])
-    const month = w.t.deps.clock.now().toISOString().slice(0, 7) + '-01'
+    const month = `${w.t.deps.clock.now().toISOString().slice(0, 7)}-01`
     expect(w.t.deps.store.spendOf(otherOrg, month).size).toBe(0)
     const foreign = await w.post(
       { prospectIds: [w.prospectId], groups: ['person'] },
@@ -671,7 +671,7 @@ describe('malformed provider answers', () => {
     // A malformed answer is not billed and is not tried again.
     expect(bad.calls).toHaveLength(1)
     expect(run.costMicros).toBe(10_000)
-    const month = w.t.deps.clock.now().toISOString().slice(0, 7) + '-01'
+    const month = `${w.t.deps.clock.now().toISOString().slice(0, 7)}-01`
     const spent = [...w.t.deps.store.spendOf(w.organizationId, month).values()]
     expect(spent.reduce((sum, s) => sum + s.costMicros, 0)).toBe(10_000)
   })

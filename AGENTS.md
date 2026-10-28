@@ -180,9 +180,37 @@ the row `sending` (it still counts) and never sends again; `reconcile` settles r
 ten minutes as `sent` with no provider ids, since the provider has no lookup. Any other provider
 error settles `failed`, final for the key (a retry needs a new `attemptEpoch`). Every message
 carries `List-Unsubscribe` (one-click) and a signed link from `MAIL_UNSUBSCRIBE_URL`
-(`unsubscribe.ts`, 30 days); the route behind it is not built. `GET /v1/mail/capacity` shows
+(`unsubscribe.ts`, 30 days). `GET /v1/mail/capacity` shows
 remaining sends and the next send time per Mailbox (`capacity.ts`). No internal `submitSend` HTTP
 route yet (no inbound shared-secret auth).
+
+## Mail events (`src/modules/mailevent`)
+
+Public routes, mounted before the token middleware: the unsubscribe page (`GET`/`POST
+/v1/public/mail/unsubscribe/{token}`, same answer for known and unknown Prospects, only the token's
+Organization is touched) and the Gmail and Graph notification webhooks. A webhook proves itself with
+a signed state naming Organization and Mailbox (`state.ts`, Graph's `clientState`, Gmail's `state`
+query), Gmail's push also with Google's OIDC token (`GMAIL_PUSH_AUDIENCE`,
+`GMAIL_PUSH_SERVICE_ACCOUNT`; outside `local` it refuses everything until both are set); the push
+body is never read. A webhook only verifies and enqueues a `mail.poll` message; the consumer
+(`mailEventHandlers`) runs `pollMailbox`, which pages the inbox from the Mailbox's `syncCursor`
+(Gmail History id, Graph timestamp) through `MailTransport.fetchInbound` (headers only) and does not
+advance the cursor past a notice that failed. `ingest` matches a notice to our Send by thread. Hard
+bounce (or the third soft one in an Enrollment) and complaint suppress through core
+(`CoreSuppression`, HTTP or memory), a complaint also pauses the Mailbox, and a reply, hard bounce,
+complaint and unsubscribe stop the Prospect's Enrollments (`stopProspect` = the engine's
+`stopForProspect`). Each is logged once in `mail_events` (idempotent on the provider message id) and
+published as a `mail.*` event, which today is only logged. Nothing creates the Gmail watch or Graph
+subscription that carries the state, and nothing polls on a timer: webhooks are the only trigger.
+
+The unsubscribe routes are rate limited (`rate.limited`, 429, `Retry-After`) through the
+`RateLimiter` port (Postgres: the db library's `outbound.unsubscribe_rate_counter` functions; memory:
+a test double). An unusable token counts against the client address (20 an hour); a genuine token
+counts against itself (30 an hour) and is never refused because of the address, since an unsubscribe
+is a legal duty and one-click POSTs come from shared provider addresses. Keys are HMACs. The address
+is `TRUSTED_PROXY_HOPS` entries from the right of `X-Forwarded-For` (default 0 = socket address
+only). Nothing purges old counter rows yet (`purgeUnsubscribeRateCounters` exists).
+
 ## Sequence engine (`src/modules/engine`)
 
 `sweep` (timer in `server.ts`, `ENGINE_SWEEP_INTERVAL_MS`, 0 = off) asks `dueOrganizations` which

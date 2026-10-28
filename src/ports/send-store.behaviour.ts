@@ -230,6 +230,24 @@ export function describeSendStore(label: string, make: () => SendStoreHarness): 
       })
     })
 
+    test('findByThread finds the latest sent message of that Mailbox and thread only', async () => {
+      const { store, mailbox } = make()
+      const o = org()
+      const [a, b] = [await mailbox(o), await mailbox(o)]
+      const send = newSend(a)
+      await store.reserve(o, send, openLimits(a))
+      await store.settle(o, send.id, {
+        state: 'sent',
+        at: '2026-03-10T12:00:00.000Z',
+        providerMessageId: 'm1',
+        providerThreadId: 'thread-1',
+      })
+      expect((await store.findByThread(o, a, 'thread-1'))?.id).toBe(send.id)
+      expect(await store.findByThread(o, b, 'thread-1')).toBeNull()
+      expect(await store.findByThread(o, a, 'thread-2')).toBeNull()
+      expect(await store.findByThread(org(), a, 'thread-1')).toBeNull()
+    })
+
     test('listStale returns old sending rows, oldest first, bounded', async () => {
       const { store, mailbox } = make()
       const o = org()

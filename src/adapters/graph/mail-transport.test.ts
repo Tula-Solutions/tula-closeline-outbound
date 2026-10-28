@@ -433,3 +433,65 @@ describe('graph adapter', () => {
     }
   })
 })
+
+describe('Graph fetchInbound', () => {
+  test('selects headers only and classifies a reply, a complaint and an auto reply', async () => {
+    const urls: string[] = []
+    const transport = createGraphMailTransport({
+      ...BASE,
+      fetch: async (input) => {
+        urls.push(input)
+        return Response.json({
+          value: [
+            {
+              id: 'g1',
+              conversationId: 'c1',
+              receivedDateTime: '2026-10-02T10:00:00Z',
+              subject: 'Re: hi',
+              from: { emailAddress: { address: 'ana@prospect.test' } },
+            },
+            {
+              id: 'g2',
+              conversationId: 'c2',
+              receivedDateTime: '2026-10-02T11:00:00Z',
+              subject: 'Abuse report',
+              from: { emailAddress: { address: 'abuse@isp.test' } },
+              internetMessageHeaders: [
+                { name: 'Content-Type', value: 'multipart/report; report-type=feedback-report' },
+              ],
+            },
+            {
+              id: 'g3',
+              conversationId: 'c3',
+              receivedDateTime: '2026-10-02T12:00:00Z',
+              subject: 'Automatic reply: away',
+              from: { emailAddress: { address: 'bo@prospect.test' } },
+            },
+            {
+              id: 'g4',
+              conversationId: 'c4',
+              receivedDateTime: '2026-10-02T13:00:00Z',
+              subject: 'note to self',
+              from: { emailAddress: { address: 'rep@us.test' } },
+            },
+          ],
+        })
+      },
+      sleep: async () => undefined,
+    })
+    const { notices, cursor, more } = await transport.fetchInbound('token', {
+      cursor: null,
+      since: '2026-10-01T00:00:00.000Z',
+      ownAddress: 'rep@us.test',
+    })
+    expect(notices.map((n) => [n.providerMessageId, n.threadId, n.kind])).toEqual([
+      ['g1', 'c1', 'reply'],
+      ['g2', 'c2', 'complaint'],
+      ['g3', 'c3', 'out_of_office'],
+    ])
+    expect(more).toBe(false)
+    expect(cursor).not.toBeNull()
+    expect(decodeURIComponent(urls[0] ?? '')).toContain('$select=id,conversationId')
+    expect(urls[0]).not.toContain('body')
+  })
+})

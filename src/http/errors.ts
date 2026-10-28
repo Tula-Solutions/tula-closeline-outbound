@@ -69,7 +69,7 @@ export function createErrorHandler(container: Container): ErrorHandler<AppEnv> {
       requestId: c.get('requestId'),
       organizationId: c.get('organizationId'),
       method: c.req.method,
-      path: c.req.path,
+      path: c.req.path.replace(/(\/unsubscribe\/)[^/]+$/, '$1:token'),
       status,
     })
 

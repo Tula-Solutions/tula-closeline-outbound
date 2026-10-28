@@ -3,6 +3,7 @@ import {
   enrichmentRunIdSchema,
   enrollmentIdSchema,
   MAX_ATTEMPT_EPOCH,
+  mailboxIdSchema,
   prospectIdSchema,
   roleSchema,
   stepKeySchema,
@@ -68,14 +69,32 @@ export const enrollmentStep = defineMessage({
   }),
 })
 
+/**
+ * Asks the consumer to read one bounded step of a Mailbox's inbox from its stored cursor. The
+ * cursor is in the Mailbox row, so a repeated message only reads again; the handler publishes the
+ * next one while the provider has more.
+ */
+export const mailPoll = defineMessage({
+  type: 'mail.poll',
+  version: 1,
+  scope: 'organization',
+  payload: z.object({ mailboxId: mailboxIdSchema }),
+})
+
 /** Every message type this service's queue carries. */
 export type OutboundDefinition =
   | typeof enrichmentRun
   | typeof audienceCheckPage
   | typeof enrollmentStep
+  | typeof mailPoll
 
 /** An envelope of any type this service's queue carries. */
 export type OutboundEnvelope = EnvelopeOf<OutboundDefinition>
 
 /** Validates and builds the envelopes of {@link OutboundDefinition}; shared by the queue and publishers. */
-export const registry = createMessageRegistry([enrichmentRun, audienceCheckPage, enrollmentStep])
+export const registry = createMessageRegistry([
+  enrichmentRun,
+  audienceCheckPage,
+  enrollmentStep,
+  mailPoll,
+])

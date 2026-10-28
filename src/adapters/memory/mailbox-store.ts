@@ -119,6 +119,28 @@ export function createMemoryMailboxStore(): MailboxStore {
       return { record: entry.record, changed: true }
     },
 
+    async pause(organizationId, id, reason, at) {
+      const entry = entries.get(key(organizationId, id))
+      if (entry === undefined) {
+        return null
+      }
+      const before = entry.record.state
+      if (before === 'paused' || before === 'disconnected') {
+        return { record: entry.record, before, changed: false }
+      }
+      entry.record = { ...entry.record, state: 'paused', stateReason: reason, stateChangedAt: at }
+      return { record: entry.record, before, changed: true }
+    },
+
+    async markSynced(organizationId, id, at, expected, cursor) {
+      const entry = entries.get(key(organizationId, id))
+      if (entry === undefined || entry.record.syncCursor !== expected) {
+        return false
+      }
+      entry.record = { ...entry.record, lastSyncedAt: at, syncCursor: cursor }
+      return true
+    },
+
     async registerAttempt(organizationId, attempt) {
       const k = `${organizationId}/${attempt.stateHash}`
       if (!attempts.has(k)) {

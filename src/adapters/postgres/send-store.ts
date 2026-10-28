@@ -259,6 +259,25 @@ export function createPostgresSendStore(inOrganization: InOrganization): SendSto
         : null
     },
 
+    async findByThread(organizationId, mailboxId, providerThreadId) {
+      const [row] = await inOrganization(organizationId, (tx) =>
+        tx
+          .select()
+          .from(mailMessages)
+          .where(
+            and(
+              eq(mailMessages.organizationId, organizationId),
+              eq(mailMessages.mailboxId, mailboxId),
+              eq(mailMessages.providerThreadId, providerThreadId),
+              eq(mailMessages.state, 'sent')
+            )
+          )
+          .orderBy(desc(mailMessages.sentAt))
+          .limit(1)
+      )
+      return row === undefined ? null : storedOf(row)
+    },
+
     async listStale(organizationId, before, limit) {
       const rows = await inOrganization(organizationId, (tx) =>
         tx

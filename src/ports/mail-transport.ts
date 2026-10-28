@@ -62,6 +62,27 @@ export type OutgoingMessage = {
 /** The ids the provider gave a message it accepted. */
 export type SentMessage = { providerMessageId: string; threadId: string }
 
+/** What an inbound message is, judged from its headers alone. */
+export type InboundKind = 'hard_bounce' | 'soft_bounce' | 'complaint' | 'reply' | 'out_of_office'
+
+/** One inbound message reduced to what the service may keep: ids, kind and time; never a subject or body. */
+export type InboundNotice = {
+  providerMessageId: string
+  threadId: string
+  kind: InboundKind
+  /** When the provider received it (ISO 8601). */
+  receivedAt: string
+}
+
+/** One bounded read of a Mailbox's inbox. */
+export type InboundPage = {
+  notices: InboundNotice[]
+  /** Where the next read resumes; store it only once every notice is handled. Never past an unread message. */
+  cursor: string | null
+  /** True when the inbox holds more than this read covered: read again at once. */
+  more: boolean
+}
+
 /** One mail provider's OAuth grant and send API (Gmail now, Microsoft Graph next). */
 export interface MailTransport {
   /** The provider this transport talks to. */
@@ -85,4 +106,13 @@ export interface MailTransport {
   revoke(token: string): Promise<void>
   /** Sends one email. Never retried after an unknown outcome: a timeout may have sent it. */
   send(accessToken: string, message: OutgoingMessage): Promise<SentMessage>
+  /**
+   * The next bounded read (at most 50 messages) of the inbox from `cursor`, or, with no cursor, from
+   * `since`. Each message is classified from its headers; messages from `ownAddress` are left out.
+   * Only headers are read, never a body. Reading from a returned cursor may repeat a message.
+   */
+  fetchInbound(
+    accessToken: string,
+    input: { cursor: string | null; since: string; ownAddress: string }
+  ): Promise<InboundPage>
 }

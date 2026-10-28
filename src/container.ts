@@ -24,10 +24,13 @@ import { createLocalKeySecretBox, createUnconfiguredSecretBox } from '~/adapters
 import { createSecretBoxVault } from '~/adapters/crypto/vault'
 import { createExaWebSearch } from '~/adapters/exa/web-search'
 import { createGmailMailTransport } from '~/adapters/gmail/mail-transport'
+import { createGooglePushVerifier } from '~/adapters/gmail/push-verifier'
 import { createGraphMailTransport } from '~/adapters/graph/mail-transport'
 import { createHttpCoreProspects } from '~/adapters/http/core'
+import { createHttpCoreSuppression } from '~/adapters/http/core-suppression'
 import { createMemoryAudienceCheckStore } from '~/adapters/memory/audience-check-store'
 import { createMemoryCore } from '~/adapters/memory/core'
+import { createMemoryCoreSuppression } from '~/adapters/memory/core-suppression'
 import {
   createMemoryApprovals,
   createMemoryDraftSource,
@@ -43,9 +46,11 @@ import { createPostgresCampaignStore } from '~/adapters/postgres/campaign-store'
 import { createPostgresEnrollmentStore } from '~/adapters/postgres/enrollment-store'
 import { createPostgresFitStore } from '~/adapters/postgres/fit-store'
 import { createPostgresLinkedinStore } from '~/adapters/postgres/linkedin-store'
+import { createPostgresMailEventStore } from '~/adapters/postgres/mail-event-store'
 import { createPostgresMailboxStore } from '~/adapters/postgres/mailbox-store'
 import { createPostgresModelUsageStore } from '~/adapters/postgres/model-usage'
 import { createPostgresProviderConfig } from '~/adapters/postgres/provider-config'
+import { createPostgresRateLimiter } from '~/adapters/postgres/rate-limiter'
 import { createPostgresSendStore } from '~/adapters/postgres/send-store'
 import { createPostgresSignalStore } from '~/adapters/postgres/signal-store'
 import { createPostgresEnrichmentStore } from '~/adapters/postgres/store'
@@ -61,12 +66,14 @@ import type { BrandVoiceDeps } from '~/modules/brand-voice/deps'
 import { campaignHandlers } from '~/modules/campaign/audience'
 import type { CampaignDeps } from '~/modules/campaign/deps'
 import type { EngineDeps } from '~/modules/engine/deps'
-import { engineHandlers } from '~/modules/engine/service'
+import { engineHandlers, stopForProspect } from '~/modules/engine/service'
 import type { EnrichmentDeps } from '~/modules/enrichment/deps'
 import { enrichmentHandlers } from '~/modules/enrichment/handlers'
 import type { FitDeps } from '~/modules/fit/deps'
 import { defaultSendSettings, type LinkedinDeps } from '~/modules/linkedin/deps'
 import type { MailboxDeps } from '~/modules/mailbox/deps'
+import type { MailEventDeps } from '~/modules/mailevent/deps'
+import { mailEventHandlers } from '~/modules/mailevent/service'
 import type { SendDeps } from '~/modules/send/deps'
 import type { SignalDeps } from '~/modules/signal/deps'
 import type { Model } from '~/ports/model'
@@ -116,6 +123,8 @@ export type Container = {
   mailboxes: MailboxDeps
   /** Everything the signal module needs; its service functions take this first. */
   signals: SignalDeps
+  /** Everything the mail event module needs: provider notifications and the unsubscribe page. */
+  inboundMail: MailEventDeps
   /** Everything the fit module needs; its service functions take this first. */
   fit: FitDeps
   /** Everything the send pipeline needs. */
@@ -402,6 +411,46 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     unsubscribe: { secret: env.MAIL_STATE_SECRET, url: env.MAIL_UNSUBSCRIBE_URL },
     organizationDailyCap: env.MAIL_ORG_DAILY_CAP,
   }
+  const suppressionHttp =
+    coreHttp === undefined
+      ? undefined
+      : createHttpCoreSuppression({
+          baseUrl: env.CORE_URL as string,
+          secret: env.CORE_INTERNAL_SECRET as string,
+          environment: env.ENVIRONMENT,
+          timeoutMs: env.CORE_CALL_TIMEOUT_MS,
+          maxAttempts: env.CORE_CALL_MAX_TRIES,
+          logger,
+        })
+  const inboundMail: MailEventDeps = {
+    mailboxes,
+    sends: send.store,
+    enrollments: campaigns.enrollments,
+    log: createPostgresMailEventStore(inOrganization),
+    prospects: prospectsCore,
+    suppression: suppressionHttp ?? createMemoryCoreSuppression(),
+    clock: systemClock,
+    logger,
+    secret: env.MAIL_STATE_SECRET,
+    rateLimit: createPostgresRateLimiter(database.db),
+    trustedProxyHops: env.TRUSTED_PROXY_HOPS,
+    verifyPush:
+      env.GMAIL_PUSH_AUDIENCE !== undefined && env.GMAIL_PUSH_SERVICE_ACCOUNT !== undefined
+        ? createGooglePushVerifier({
+            audience: env.GMAIL_PUSH_AUDIENCE,
+            serviceAccount: env.GMAIL_PUSH_SERVICE_ACCOUNT,
+            now: () => systemClock.now().getTime(),
+          })
+        : // Without the audience and account the webhook cannot tell Google from anyone; only local runs open.
+          async () => env.ENVIRONMENT === 'local',
+    queue,
+    stopProspect: (organizationId, prospectId, reason) =>
+      stopForProspect(engine, organizationId, prospectId, reason),
+    // There is no event bus in this service yet; the event is logged (ids only) until one exists.
+    publish: async (organizationId, event) => {
+      logger.info(event.name, { organizationId, ...event.payload })
+    },
+  }
   if (env.ENVIRONMENT !== 'local') {
     logger.warn('the Sequence engine uses in-memory drafts, approvals and contacts', {})
   }
@@ -471,6 +520,7 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
       ...enrichmentHandlers(enrichment),
       ...campaignHandlers(campaigns),
       ...engineHandlers(engine),
+      ...mailEventHandlers(inboundMail),
     },
     concurrency: env.CONSUMER_CONCURRENCY,
   })
@@ -493,6 +543,7 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     brandVoice,
     mailboxes,
     signals,
+    inboundMail,
     fit,
     send,
     linkedin,
