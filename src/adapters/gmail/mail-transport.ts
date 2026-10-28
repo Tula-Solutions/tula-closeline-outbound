@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto'
+import { createProviderCall } from '~/adapters/provider-call'
 import {
   type ConnectedAccount,
   type GrantTokens,
@@ -42,10 +43,6 @@ export type GmailMailTransportOptions = {
   /** The clock token expiry is measured from; defaults to the system clock. */
   now?: () => Date
 }
-
-type Outcome = { status: number; body: unknown }
-
-const MAX_RESPONSE_BYTES = 1_000_000
 
 /** Headers a caller may not set because the transport owns them. */
 const RESERVED_HEADERS = new Set([
@@ -159,49 +156,7 @@ export function createGmailMailTransport(options: GmailMailTransportOptions): Ma
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
   const random = options.random ?? Math.random
 
-  async function call(
-    url: string,
-    init: RequestInit,
-    retryOn: (outcome: Outcome | 'network' | 'timeout') => boolean
-  ): Promise<Outcome> {
-    let last: MailTransportError = new MailTransportError('unavailable')
-    for (let attempt = 1; attempt <= Math.max(1, options.maxTries); attempt += 1) {
-      if (attempt > 1) {
-        await sleep(options.retryBaseMs * 2 ** (attempt - 2) * (0.5 + random()))
-      }
-      let outcome: Outcome | 'network' | 'timeout'
-      try {
-        const response = await doFetch(url, {
-          ...init,
-          signal: AbortSignal.timeout(options.timeoutMs),
-        })
-        const text = await response.text()
-        let body: unknown = null
-        if (text.length > 0 && text.length <= MAX_RESPONSE_BYTES) {
-          try {
-            body = JSON.parse(text)
-          } catch {
-            body = null
-          }
-        }
-        outcome = { status: response.status, body }
-      } catch (error) {
-        outcome = error instanceof Error && error.name === 'TimeoutError' ? 'timeout' : 'network'
-      }
-      if (typeof outcome !== 'string') {
-        if (outcome.status < 500 && outcome.status !== 429) {
-          return outcome
-        }
-        last = new MailTransportError('unavailable', outcome.status)
-      } else {
-        last = new MailTransportError(outcome === 'timeout' ? 'timeout' : 'unavailable')
-      }
-      if (!retryOn(outcome)) {
-        break
-      }
-    }
-    throw last
-  }
+  const call = createProviderCall({ ...options, fetch: doFetch, sleep, random })
 
   const retryAlways = () => true
   const form = (values: Record<string, string>): RequestInit => ({

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import type { MailboxProvider } from 'tula-closeline-contract'
 import type { Clock } from 'tula-closeline-kit'
 import {
   type ConnectedAccount,
@@ -17,6 +18,8 @@ export type MemoryMailTransport = MailTransport & {
   consent(account: { address: string; displayName: string }): string
   /** The provider revokes the grant behind this refresh token. */
   revokeGrant(refreshToken: string): void
+  /** While on, each refresh hands out a new refresh token and ends the old one, as Microsoft does. */
+  rotateRefreshTokens(on: boolean): void
   /** The next `times` provider calls fail as unavailable. */
   failProvider(times: number): void
   /** Messages the provider accepted, oldest first. */
@@ -30,6 +33,8 @@ export type MemoryMailTransportOptions = {
   clock: Clock
   /** Where the authorization URL sends the person back to; the memory provider consents at once. */
   redirectUri?: string
+  /** Which provider this stands in for; defaults to Gmail. */
+  provider?: MailboxProvider
 }
 
 type Grant = { account: ConnectedAccount; revoked: boolean }
@@ -49,6 +54,7 @@ export function createMemoryMailTransport(
   const revokedByUs: string[] = []
   let failures = 0
   let accounts = 0
+  let rotate = false
 
   const guard = () => {
     if (failures > 0) {
@@ -77,13 +83,16 @@ export function createMemoryMailTransport(
   }
 
   return {
-    provider: 'gmail',
+    provider: options.provider ?? 'gmail',
     consent: (account) => consent(account),
     revokeGrant(refreshToken) {
       const grant = grants.get(refreshToken)
       if (grant !== undefined) {
         grant.revoked = true
       }
+    },
+    rotateRefreshTokens(on) {
+      rotate = on
     },
     failProvider(times) {
       failures = times
@@ -127,7 +136,13 @@ export function createMemoryMailTransport(
       if (grant === undefined || grant.revoked) {
         throw new MailTransportError('grant_invalid', 400)
       }
-      return issue(refreshToken)
+      if (!rotate) {
+        return issue(refreshToken)
+      }
+      const next = `memory-refresh-${randomUUID()}`
+      grant.revoked = true
+      grants.set(next, { account: grant.account, revoked: false })
+      return { ...issue(next), refreshToken: next }
     },
 
     async revoke(token) {
