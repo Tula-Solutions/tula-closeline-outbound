@@ -302,4 +302,20 @@ describe('the Postgres Enrollment store', () => {
     expect(await store.variantCounts(org, campaignId, 1, 'other-step')).toEqual([])
     expect(await store.variantCounts(other, campaignId, 1, 'intro')).toEqual([])
   })
+
+  test('a variant the Campaign no longer has never blocks a send or a stop', async () => {
+    const org = newOrganizationId()
+    const campaignId = await seedCampaign(org)
+    const r = row(campaignId, AT)
+    const sent: EnrollmentEvent = {
+      ...(r.events[0] as EnrollmentEvent),
+      id: formatId('eev', crypto.randomUUID()),
+      kind: 'sent',
+      stepKey: 'intro',
+      variantKey: 'removed',
+    }
+    await store.insertIfAbsent(org, r.enrollment, [...r.events, sent])
+    expect(await store.stop(org, r.enrollment.id, 'replied', AT, null)).not.toBeNull()
+    expect(await store.variantCounts(org, campaignId, 1, 'intro')).toEqual([])
+  })
 })

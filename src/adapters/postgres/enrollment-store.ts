@@ -80,6 +80,11 @@ const TALLY_OF_STOP: Partial<Record<NonNullable<EnrollmentEvent['stopReason']>, 
   unsubscribed: 'unsubscribed',
 }
 
+/**
+ * Adds one to a tally of the Campaign's current Sequence version. shortcut: a variant the current
+ * version no longer has is skipped (never fails the send or stop), and a stop is credited to the
+ * current version, not the one it was sent under; a running Campaign cannot save a Sequence.
+ */
 async function addToTally(
   tx: Transaction,
   organizationId: OrganizationId,
@@ -93,7 +98,12 @@ async function addToTally(
     insert into outbound.variant_stats
       (organization_id, campaign_id, version, step_key, variant_key, ${col})
     select ${organizationId}, c.id, c.sequence_version, ${stepKey}, ${variantKey}, 1
-    from outbound.campaigns c where c.organization_id = ${organizationId} and c.id = ${campaignId}
+    from outbound.campaigns c
+    where c.organization_id = ${organizationId} and c.id = ${campaignId}
+      and exists (
+        select 1 from outbound.variants v
+        where v.organization_id = c.organization_id and v.campaign_id = c.id
+          and v.version = c.sequence_version and v.step_key = ${stepKey} and v.key = ${variantKey})
     on conflict (organization_id, campaign_id, version, step_key, variant_key)
     do update set ${col} = outbound.variant_stats.${col} + 1`)
 }

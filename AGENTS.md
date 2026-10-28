@@ -98,7 +98,8 @@ a read and on about 5% of sends. `variant.promoted` is only logged (ids), no eve
 A promotion belongs to one Sequence version; a re-saved Sequence starts without one. The counts are
 not stored per event: `outbound.variant_stats` holds sent, replied, bounced and unsubscribed per
 (Campaign, Sequence version, Step, variant), incremented in the transaction that writes the event
-(`enrollment-store.ts`), so a results read costs the number of variants.
+(`enrollment-store.ts`), so a results read costs the number of variants. A variant the current version lacks is not counted
+(it never fails a send or stop), and no backfill exists: nothing ran before the counters.
 
 ## Mailboxes (`src/modules/mailbox`)
 
