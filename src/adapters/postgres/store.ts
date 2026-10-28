@@ -1,10 +1,11 @@
-import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, isNull, lt, or, sql } from 'drizzle-orm'
 import {
   type EnrichmentAttempt,
   type EnrichmentRun,
   type EnrichmentRunSet,
   enrichmentRunSchema,
   formatId,
+  type ProviderKey,
 } from 'tula-closeline-contract'
 import type { Transaction } from 'tula-closeline-db'
 import {
@@ -578,6 +579,46 @@ export function createPostgresEnrichmentStore(inOrganization: InOrganization): E
 
     async monthSpend(organizationId, month) {
       return inOrganization(organizationId, (tx) => monthTotal(tx, organizationId, month))
+    },
+
+    async listSpend(organizationId, filter) {
+      return inOrganization(organizationId, async (tx) => {
+        const after = filter.after
+        const rows = await tx
+          .select()
+          .from(enrichmentSpend)
+          .where(
+            and(
+              eq(enrichmentSpend.organizationId, organizationId),
+              filter.month === undefined ? undefined : eq(enrichmentSpend.month, filter.month),
+              after === undefined
+                ? undefined
+                : or(
+                    lt(enrichmentSpend.month, after.month),
+                    and(
+                      eq(enrichmentSpend.month, after.month),
+                      gt(enrichmentSpend.provider, after.provider)
+                    )
+                  )
+            )
+          )
+          .orderBy(desc(enrichmentSpend.month), asc(enrichmentSpend.provider))
+          .limit(filter.limit + 1)
+        const page = rows.slice(0, filter.limit)
+        const last = page.at(-1)
+        return {
+          items: page.map((r) => ({
+            month: r.month,
+            provider: r.provider as ProviderKey,
+            costMicros: Number(r.costMicros),
+            calls: r.calls,
+          })),
+          next:
+            rows.length > filter.limit && last !== undefined
+              ? { month: last.month, provider: last.provider }
+              : null,
+        }
+      })
     },
   }
 }

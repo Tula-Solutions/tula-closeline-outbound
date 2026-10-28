@@ -290,3 +290,61 @@ describe('using the providers', () => {
     expect(w.seen.map((s) => s.key)).toEqual([KEY_A, KEY_B])
   })
 })
+
+describe('budget and spend', () => {
+  const found: Found = { person: { first_name: 'Ada' } }
+
+  test('the budget starts at the configured limit and falls as providers are paid', async () => {
+    const w = await world(() => json(found))
+    const owner = w.person()
+    const before = await call(w.t, 'GET', '/v1/enrichment/budget', owner)
+    expect(before.status).toBe(200)
+    expect(before.body).toMatchObject({ spentMicros: 0, version: 0, updatedAt: null })
+    expect(before.body.remainingMicros).toBe(before.body.monthlyLimitMicros)
+    await turnOn(w.t, owner, 'apollo', KEY_A)
+    await enrich(w.t, owner)
+    const after = (await call(w.t, 'GET', '/v1/enrichment/budget', owner)).body
+    expect(after.spentMicros as number).toBeGreaterThan(0)
+    expect(after.remainingMicros).toBe(
+      (after.monthlyLimitMicros as number) - (after.spentMicros as number)
+    )
+  })
+
+  test('spend lists by month and provider, pages with a cursor, and filters by month', async () => {
+    const w = await world(() => json(found))
+    const owner = w.person()
+    await turnOn(w.t, owner, 'apollo', KEY_A)
+    await enrich(w.t, owner)
+    const all = await call(w.t, 'GET', '/v1/enrichment/spend?limit=1', owner)
+    expect(all.status).toBe(200)
+    const items = all.body.items as { month: string; provider: string; calls: number }[]
+    expect(items).toHaveLength(1)
+    expect(items[0]).toMatchObject({ provider: 'apollo', calls: 1 })
+    expect(items[0]?.month).toMatch(/^\d{4}-\d{2}$/)
+    expect(all.body.nextCursor).toBeNull()
+    const other = await call(w.t, 'GET', '/v1/enrichment/spend?month=1999-01', owner)
+    expect(other.body.items).toEqual([])
+    expect(codeOf(await call(w.t, 'GET', '/v1/enrichment/spend?cursor=nope', owner))).toBe(
+      'request.invalid'
+    )
+  })
+
+  test('owner, admin and manager read; a rep does not; another Organization sees none of it', async () => {
+    const w = await world(() => json(found))
+    const a = w.person()
+    await turnOn(w.t, a, 'apollo', KEY_A)
+    await enrich(w.t, a)
+    const org = a.organizationId
+    for (const role of ['admin', 'manager'] as const) {
+      const as = w.person(org, role)
+      expect((await call(w.t, 'GET', '/v1/enrichment/budget', as)).status).toBe(200)
+      expect((await call(w.t, 'GET', '/v1/enrichment/spend', as)).status).toBe(200)
+    }
+    const rep = w.person(org, 'rep')
+    expect(codeOf(await call(w.t, 'GET', '/v1/enrichment/budget', rep))).toBe('auth.forbidden')
+    expect(codeOf(await call(w.t, 'GET', '/v1/enrichment/spend', rep))).toBe('auth.forbidden')
+    const b = w.person()
+    expect((await call(w.t, 'GET', '/v1/enrichment/spend', b)).body.items).toEqual([])
+    expect((await call(w.t, 'GET', '/v1/enrichment/budget', b)).body.spentMicros).toBe(0)
+  })
+})

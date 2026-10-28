@@ -1,6 +1,7 @@
 import {
   decodeCursor,
   ENRICHMENT_ERRORS,
+  type EnrichmentBudget,
   ERRORS,
   encodeCursor,
   type FieldGroup,
@@ -9,12 +10,14 @@ import {
   type ProviderSettings,
   type SetProviderRequest,
   type SetWaterfallRequest,
+  type SpendEntry,
   type Waterfall,
 } from 'tula-closeline-contract'
 import { z } from 'zod'
 import { domainError } from '~/http/domain-error'
 import { orderOf, type StoredProvider, versionOf } from '~/ports/provider-config'
 import type { EnrichmentDeps } from './deps'
+import { monthOf } from './waterfall'
 
 const cursorSchema = z.object({ provider: z.string().max(64) })
 
@@ -160,4 +163,51 @@ export async function setWaterfall(
     throw domainError(ENRICHMENT_ERRORS['enrichment.version_conflict'])
   }
   return getWaterfall(deps, caller)
+}
+
+const spendCursorSchema = z.object({ month: z.string().max(10), provider: z.string().max(64) })
+
+/** This month's budget: the limits from configuration, what is spent and held, and when it resets (UTC). */
+export async function getBudget(
+  deps: EnrichmentDeps,
+  caller: { organizationId: OrganizationId }
+): Promise<EnrichmentBudget> {
+  const now = deps.clock.now()
+  const month = monthOf(now)
+  const spent = await deps.store.monthSpend(caller.organizationId, month)
+  const limit = deps.limits.monthlyBudgetMicros
+  return {
+    month: month.slice(0, 7),
+    monthlyLimitMicros: limit,
+    perRunCeilingMicros: Math.min(deps.limits.runCeilingMicros, limit),
+    spentMicros: spent,
+    remainingMicros: Math.max(0, limit - spent),
+    resetsAt: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString(),
+    version: 0,
+    updatedAt: null,
+  }
+}
+
+/** Lists spend by month and provider, newest month first, optionally for one month. */
+export async function listSpend(
+  deps: EnrichmentDeps,
+  caller: { organizationId: OrganizationId },
+  query: { cursor?: string | undefined; limit: number; month?: string | undefined }
+): Promise<{ items: SpendEntry[]; nextCursor: string | null }> {
+  let after: { month: string; provider: string } | undefined
+  if (query.cursor !== undefined) {
+    after = decodeCursor(query.cursor, spendCursorSchema)
+    if (after === undefined) {
+      throw domainError(ERRORS['request.invalid'])
+    }
+  }
+  const page = await deps.store.listSpend(caller.organizationId, {
+    month: query.month === undefined ? undefined : `${query.month}-01`,
+    after,
+    limit: query.limit,
+  })
+  return {
+    items: page.items.map((row) => ({ ...row, month: row.month.slice(0, 7) })),
+    nextCursor: page.next === null ? null : encodeCursor(page.next),
+  }
 }
