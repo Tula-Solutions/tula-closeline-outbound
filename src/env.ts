@@ -260,11 +260,11 @@ const schema = z
     /** Where the unsubscribe link in every email points (the public page); the signed token is appended. Required outside `local`. */
     MAIL_UNSUBSCRIBE_URL: z.url().max(2_048).optional(),
     /** The URL Pub/Sub pushes Gmail notifications to; the audience of its OIDC token. Required outside `local` with GMAIL_PUSH_SERVICE_ACCOUNT. */
-    /** How many proxies in front of the service append to X-Forwarded-For; 0 ignores the header. */
-    TRUSTED_PROXY_HOPS: integer(0, 3).default(0),
     GMAIL_PUSH_AUDIENCE: z.url().max(2_048).optional(),
     /** The service account the push subscription signs as; the only email its token may carry. */
     GMAIL_PUSH_SERVICE_ACCOUNT: z.email().max(320).optional(),
+    /** How many proxies in front of the service append to X-Forwarded-For; 0 ignores the header. */
+    TRUSTED_PROXY_HOPS: integer(0, 3).default(0),
     /** The most emails the Organization sends in one UTC day across all its Mailboxes. */
     MAIL_ORG_DAILY_CAP: integer(1, 100_000).default(500),
   })
