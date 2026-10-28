@@ -1,6 +1,12 @@
-import type { DraftId, OrganizationId, OutreachDraft, ProspectId } from 'tula-closeline-contract'
+import type { DraftId, OrganizationId, ProspectId } from 'tula-closeline-contract'
 import { formatId } from 'tula-closeline-contract'
-import type { Approvals, DraftSource, ProspectContact, ProspectContacts } from '~/ports/engine'
+import type {
+  Approvals,
+  DraftSource,
+  ProspectContact,
+  ProspectContacts,
+  VariantDraft,
+} from '~/ports/engine'
 
 /**
  * Drafts in process memory. Until draft generation exists a Draft is a placeholder that is
@@ -8,17 +14,17 @@ import type { Approvals, DraftSource, ProspectContact, ProspectContacts } from '
  * shortcut: not backed by the drafting module; swap when M06-T7 lands.
  */
 export function createMemoryDraftSource(now: () => string): DraftSource & {
-  drafts: OutreachDraft[]
-  make: ((request: Parameters<DraftSource['obtain']>[1]) => Partial<OutreachDraft>) | undefined
+  drafts: VariantDraft[]
+  make: ((request: Parameters<DraftSource['obtain']>[1]) => Partial<VariantDraft>) | undefined
 } {
-  const drafts: OutreachDraft[] = []
+  const drafts: VariantDraft[] = []
   const source: DraftSource & {
-    drafts: OutreachDraft[]
-    make: ((request: Parameters<DraftSource['obtain']>[1]) => Partial<OutreachDraft>) | undefined
+    drafts: VariantDraft[]
+    make: ((request: Parameters<DraftSource['obtain']>[1]) => Partial<VariantDraft>) | undefined
   } = {
     drafts,
     make: undefined as
-      | ((request: Parameters<DraftSource['obtain']>[1]) => Partial<OutreachDraft>)
+      | ((request: Parameters<DraftSource['obtain']>[1]) => Partial<VariantDraft>)
       | undefined,
     async obtain(_organizationId, request) {
       const existing = drafts.find(
@@ -47,8 +53,9 @@ export function createMemoryDraftSource(now: () => string): DraftSource & {
         checks: [],
         autoSendable: false,
         createdAt: now(),
+        variantKey: request.variant?.key ?? null,
         ...source.make?.(request),
-      } as unknown as OutreachDraft
+      } as unknown as VariantDraft
       drafts.push(draft)
       return draft
     },

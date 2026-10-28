@@ -176,4 +176,48 @@ describe('the Postgres Campaign store', () => {
       await store.saveSequence(newOrganizationId(), campaign.id, () => ({ kind: 'unchanged' }))
     ).toBeNull()
   })
+
+  test('an automatic promotion policy round-trips, and one winner is kept per Step', async () => {
+    const org = newOrganizationId()
+    const owner = member()
+    const campaign = await seed(org, owner, '2026-03-10T12:00:00.000Z')
+    const steps = STEPS.map((s) =>
+      s.kind === 'email' && s.variants !== null
+        ? {
+            ...s,
+            variants: {
+              ...s.variants,
+              promotion: { mode: 'auto', minSamplePerVariant: 250, marginPercentagePoints: 4.5 },
+            },
+          }
+        : s
+    ) as Step[]
+    await store.saveSequence(org, campaign.id, (current, sequence) => ({
+      kind: 'save',
+      campaign: { ...current, sequenceVersion: sequence.version + 1 },
+      steps,
+      createdBy: owner,
+    }))
+    expect((await store.readSequence(org, campaign.id, 1))?.steps).toEqual(steps)
+    expect(await store.promotionOf(org, campaign.id, 1, 'intro')).toBeNull()
+    const auto = {
+      variantKey: 'b',
+      source: 'auto' as const,
+      promotedByMembershipId: null,
+      promotedAt: '2026-03-11T12:00:00.000Z',
+    }
+    const first = await store.promote(org, campaign.id, 1, 'intro', auto)
+    expect(first).toEqual({ promotion: auto, created: true })
+    const manual = {
+      ...auto,
+      variantKey: 'a',
+      source: 'manual' as const,
+      promotedByMembershipId: owner,
+    }
+    const second = await store.promote(org, campaign.id, 1, 'intro', manual)
+    expect(second).toEqual({ promotion: auto, created: false })
+    expect(await store.promotionOf(org, campaign.id, 1, 'intro')).toEqual(auto)
+    expect((await store.readSequence(org, campaign.id, 1))?.steps).toEqual(steps)
+    expect(await store.promotionOf(newOrganizationId(), campaign.id, 1, 'intro')).toBeNull()
+  })
 })

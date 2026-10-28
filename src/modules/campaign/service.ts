@@ -376,7 +376,7 @@ function checkVariants(steps: readonly Step[]): void {
     if (step.kind !== 'email' || step.variants === null) {
       continue
     }
-    const { variants, promotion } = step.variants
+    const { variants } = step.variants
     const weight = variants.reduce((sum, variant) => sum + variant.weight, 0)
     const keys = new Set(variants.map((variant) => variant.key))
     const valid =
@@ -393,10 +393,6 @@ function checkVariants(steps: readonly Step[]): void {
         message: definition.message,
         details: { stepKey: step.key },
       })
-    }
-    if (promotion.mode === 'auto') {
-      // The database keeps no automatic-promotion settings yet, so they cannot be stored.
-      throw domainError(ERRORS['request.invalid'])
     }
   }
 }

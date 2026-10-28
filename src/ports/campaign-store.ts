@@ -5,6 +5,7 @@ import type {
   OrganizationId,
   Sequence,
   Step,
+  StepVariantResults,
   TeamId,
 } from 'tula-closeline-contract'
 
@@ -33,6 +34,9 @@ export type SequenceDecision =
       steps: readonly Step[]
       createdBy: MembershipId
     }
+
+/** The winner chosen for the variants of a Step, how and when. */
+export type Promotion = NonNullable<StepVariantResults['promotion']>
 
 /** The store of Campaigns and their Sequence versions; every call is scoped to one Organization. */
 export type CampaignStore = {
@@ -82,4 +86,23 @@ export type CampaignStore = {
     id: CampaignId,
     decide: (campaign: Campaign, current: Sequence) => SequenceDecision
   ) => Promise<{ campaign: Campaign; sequence: Sequence } | null>
+  /** The winner of the Step's test in this Sequence version, or null while none is chosen. */
+  promotionOf: (
+    organizationId: OrganizationId,
+    id: CampaignId,
+    version: number,
+    stepKey: string
+  ) => Promise<Promotion | null>
+  /**
+   * Records `promotion` as the winner of the Step's test unless one exists, holding the Step so
+   * two promotions never interleave; returns the winner now stored and whether this call wrote it.
+   * The caller has checked that the variant is part of the test.
+   */
+  promote: (
+    organizationId: OrganizationId,
+    id: CampaignId,
+    version: number,
+    stepKey: string,
+    promotion: Promotion
+  ) => Promise<{ promotion: Promotion; created: boolean }>
 }

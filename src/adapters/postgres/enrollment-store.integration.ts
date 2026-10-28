@@ -4,10 +4,12 @@ import {
   type CampaignId,
   type Enrollment,
   type EnrollmentEvent,
+  type EnrollmentStopReason,
   formatId,
   type MembershipId,
   type OrganizationId,
   type ProspectId,
+  type Step,
 } from 'tula-closeline-contract'
 import { createDb, withOrganization } from 'tula-closeline-db'
 import { integrationUrls } from '~/integration-support'
@@ -29,6 +31,23 @@ const store = createPostgresEnrollmentStore(
 const AT = '2026-03-10T12:00:00.000Z'
 const member = (): MembershipId => formatId('mem', crypto.randomUUID())
 
+const STEPS = [
+  {
+    kind: 'email',
+    key: 'intro',
+    goal: 'Introduce us',
+    variants: {
+      variants: [
+        { key: 'a', label: 'A', angle: 'Customer story', weight: 50 },
+        { key: 'b', label: 'B', angle: 'Direct ask', weight: 50 },
+      ],
+      promotion: { mode: 'manual' },
+    },
+    next: 'bye',
+  },
+  { kind: 'end', key: 'bye' },
+] as Step[]
+
 async function seedCampaign(org: OrganizationId): Promise<CampaignId> {
   const owner = member()
   const id: CampaignId = formatId('cpg', crypto.randomUUID())
@@ -39,7 +58,7 @@ async function seedCampaign(org: OrganizationId): Promise<CampaignId> {
     state: 'running',
     audience: { kind: 'filter', status: 'active' },
     audienceVersion: 1,
-    sequenceVersion: 0,
+    sequenceVersion: 1,
     previewedVersion: null,
     previewedAt: null,
     approvalMode: 'review',
@@ -55,7 +74,7 @@ async function seedCampaign(org: OrganizationId): Promise<CampaignId> {
     launchedAt: null,
     archivedAt: null,
   } as Campaign
-  await campaigns.insertIfAbsent(org, campaign, null, owner)
+  await campaigns.insertIfAbsent(org, campaign, STEPS, owner)
   return id
 }
 
@@ -247,5 +266,56 @@ describe('the Postgres Enrollment store', () => {
       after = page.next
     } while (after !== null)
     expect(seen).toContain(org)
+  })
+
+  test('variantCounts reads per-variant tallies and credits a stop to the last variant sent', async () => {
+    const org = newOrganizationId()
+    const other = newOrganizationId()
+    const campaignId = await seedCampaign(org)
+    const seed = async (variantKey: string | null, stop: EnrollmentStopReason | null) => {
+      const r = row(campaignId, AT)
+      const sent: EnrollmentEvent = {
+        ...(r.events[0] as EnrollmentEvent),
+        id: formatId('eev', crypto.randomUUID()),
+        kind: 'sent',
+        stepKey: 'intro',
+        variantKey,
+      }
+      await store.insertIfAbsent(org, r.enrollment, [...r.events, sent])
+      if (stop !== null) {
+        await store.stop(org, r.enrollment.id, stop, AT, null)
+      }
+    }
+    await seed('a', null)
+    await seed('a', 'replied')
+    await seed('a', 'hard_bounce')
+    await seed('b', 'replied')
+    await seed('b', 'unsubscribed')
+    await seed('b', 'removed_by_rep')
+    await seed(null, 'replied')
+    const byKey = (counts: Awaited<ReturnType<typeof store.variantCounts>>) =>
+      Object.fromEntries(counts.map((c) => [c.variantKey, c]))
+    const counts = byKey(await store.variantCounts(org, campaignId, 1, 'intro'))
+    expect(counts.a).toMatchObject({ sent: 3, replied: 1, bounced: 1, unsubscribed: 0 })
+    expect(counts.b).toMatchObject({ sent: 3, replied: 1, bounced: 0, unsubscribed: 1 })
+    expect(Object.keys(counts).sort()).toEqual(['a', 'b'])
+    expect(await store.variantCounts(org, campaignId, 1, 'other-step')).toEqual([])
+    expect(await store.variantCounts(other, campaignId, 1, 'intro')).toEqual([])
+  })
+
+  test('a variant the Campaign no longer has never blocks a send or a stop', async () => {
+    const org = newOrganizationId()
+    const campaignId = await seedCampaign(org)
+    const r = row(campaignId, AT)
+    const sent: EnrollmentEvent = {
+      ...(r.events[0] as EnrollmentEvent),
+      id: formatId('eev', crypto.randomUUID()),
+      kind: 'sent',
+      stepKey: 'intro',
+      variantKey: 'removed',
+    }
+    await store.insertIfAbsent(org, r.enrollment, [...r.events, sent])
+    expect(await store.stop(org, r.enrollment.id, 'replied', AT, null)).not.toBeNull()
+    expect(await store.variantCounts(org, campaignId, 1, 'intro')).toEqual([])
   })
 })
