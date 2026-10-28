@@ -10,11 +10,13 @@ import {
   type TokenVerifier,
 } from 'tula-closeline-kit'
 import {
+  createMemoryContactGuard,
   createMemoryErrorReporter,
   createMemoryQueue,
   createTestJwks,
   createTestKeyPair,
   createVirtualTime,
+  type MemoryContactGuard,
   type MemoryErrorReporter,
   type MemoryQueue,
   type MintTokenOptions,
@@ -22,9 +24,19 @@ import {
   type VirtualTime,
 } from 'tula-closeline-kit/testing'
 import { createSecretBoxVault } from '~/adapters/crypto/vault'
+import { createMemoryAudienceCheckStore } from '~/adapters/memory/audience-check-store'
 import { createMemoryBrandVoiceStore } from '~/adapters/memory/brand-voice-store'
 import { createMemoryCampaignStore } from '~/adapters/memory/campaign-store'
 import { createMemoryCore, type MemoryCore } from '~/adapters/memory/core'
+import { createMemoryEnrollmentStore } from '~/adapters/memory/enrollment-store'
+import {
+  createMemoryLinkedInProvider,
+  type MemoryLinkedInProvider,
+} from '~/adapters/memory/linkedin-provider'
+import {
+  createMemoryLinkedinStore,
+  type MemoryLinkedinStore,
+} from '~/adapters/memory/linkedin-store'
 import {
   createMemoryMailTransport,
   type MemoryMailTransport,
@@ -41,6 +53,7 @@ import { loadEnv } from '~/env'
 import type { AppEnv } from '~/http/types'
 import { SERVICE } from '~/info'
 import { type OutboundDefinition, registry } from '~/messages'
+import { campaignHandlers } from '~/modules/campaign/audience'
 import { enrichmentHandlers } from '~/modules/enrichment/handlers'
 import type { MailboxStateChanged } from '~/modules/mailbox/deps'
 
@@ -56,6 +69,8 @@ export type TestDeps = Container & {
   queue: MemoryQueue<OutboundDefinition>
   /** Core in memory: seed Prospects, read what enrichment wrote, count the calls. */
   core: MemoryCore
+  /** Contact Check stand-in: allow or deny a Prospect, or make the check unavailable. */
+  guard: MemoryContactGuard
   /** The provider settings; a test sets them per Organization. */
   config: ReturnType<typeof createMemoryProviderConfig>
   /** The store in memory, to read spend. */
@@ -66,6 +81,10 @@ export type TestDeps = Container & {
   mail: MemoryMailTransport
   /** The Outlook stand-in, same controls. */
   outlookMail: MemoryMailTransport
+  /** The LinkedIn provider stand-in: complete a hosted login, change an account's status, fail it. */
+  linkedinProvider: MemoryLinkedInProvider
+  /** The LinkedIn store in memory, to set the channel's state. */
+  linkedinStore: MemoryLinkedinStore
   /** Every `mailbox.state_changed` published, in order. */
   mailEvents: { organizationId: string; event: MailboxStateChanged }[]
   /** Every JSON log line written, in order. */
@@ -152,10 +171,17 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     },
   }
 
+  const guard = createMemoryContactGuard()
   const campaigns: Container['campaigns'] = {
     store: createMemoryCampaignStore(),
     access: core.access,
     clock: time.clock,
+    enrollments: createMemoryEnrollmentStore(),
+    checks: createMemoryAudienceCheckStore(),
+    audience: core.audience,
+    guard,
+    queue,
+    logger,
   }
 
   const brandVoice: Container['brandVoice'] = {
@@ -187,6 +213,16 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     logger,
   }
 
+  const linkedinProvider = createMemoryLinkedInProvider(time.clock)
+  const linkedinStore = createMemoryLinkedinStore()
+  const linkedin: Container['linkedin'] = {
+    store: linkedinStore,
+    access: core.access,
+    clock: time.clock,
+    provider: linkedinProvider,
+    logger,
+  }
+
   return {
     env,
     logger,
@@ -202,10 +238,14 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     campaigns,
     brandVoice,
     mailboxes,
+    linkedin,
+    linkedinProvider,
+    linkedinStore,
     mail,
     outlookMail,
     mailEvents,
     core,
+    guard,
     config,
     store,
     consumer: createOutboundConsumer({
@@ -213,7 +253,7 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
       store: processed,
       logger,
       errorReporter: errors,
-      handlers: enrichmentHandlers(enrichment),
+      handlers: { ...enrichmentHandlers(enrichment), ...campaignHandlers(campaigns) },
       concurrency: overrides.consumerConcurrency ?? env.CONSUMER_CONCURRENCY,
       sleep: time.sleep,
     }),

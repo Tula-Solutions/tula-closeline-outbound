@@ -4,6 +4,7 @@ import { createDb, type Transaction, withOrganization } from 'tula-closeline-db'
 import {
   type Clock,
   createErrorReporter,
+  createHttpContactGuard,
   createLogger,
   createMemoryProcessedStore,
   createRemoteKeySet,
@@ -17,17 +18,21 @@ import {
   type TokenVerifier,
 } from 'tula-closeline-kit'
 import { type Consumer, createSqsQueue } from 'tula-closeline-kit/queue'
-import { createMemoryQueue } from 'tula-closeline-kit/testing'
+import { createMemoryContactGuard, createMemoryQueue } from 'tula-closeline-kit/testing'
 import { createLocalKeySecretBox, createUnconfiguredSecretBox } from '~/adapters/crypto/secret-box'
 import { createSecretBoxVault } from '~/adapters/crypto/vault'
 import { createGmailMailTransport } from '~/adapters/gmail/mail-transport'
 import { createGraphMailTransport } from '~/adapters/graph/mail-transport'
 import { createHttpCoreProspects } from '~/adapters/http/core'
+import { createMemoryAudienceCheckStore } from '~/adapters/memory/audience-check-store'
 import { createMemoryCore } from '~/adapters/memory/core'
+import { createMemoryLinkedInProvider } from '~/adapters/memory/linkedin-provider'
 import { createMemoryMailTransport } from '~/adapters/memory/mail-transport'
 import { createMemorySecretBox } from '~/adapters/memory/secret-box'
 import { createPostgresBrandVoiceStore } from '~/adapters/postgres/brand-voice-store'
 import { createPostgresCampaignStore } from '~/adapters/postgres/campaign-store'
+import { createPostgresEnrollmentStore } from '~/adapters/postgres/enrollment-store'
+import { createPostgresLinkedinStore } from '~/adapters/postgres/linkedin-store'
 import { createPostgresMailboxStore } from '~/adapters/postgres/mailbox-store'
 import { createPostgresProviderConfig } from '~/adapters/postgres/provider-config'
 import { createPostgresEnrichmentStore } from '~/adapters/postgres/store'
@@ -40,9 +45,11 @@ import { type Env, loadEnv } from '~/env'
 import { SERVICE } from '~/info'
 import { type OutboundEnvelope, registry } from '~/messages'
 import type { BrandVoiceDeps } from '~/modules/brand-voice/deps'
+import { campaignHandlers } from '~/modules/campaign/audience'
 import type { CampaignDeps } from '~/modules/campaign/deps'
 import type { EnrichmentDeps } from '~/modules/enrichment/deps'
 import { enrichmentHandlers } from '~/modules/enrichment/handlers'
+import type { LinkedinDeps } from '~/modules/linkedin/deps'
 import type { MailboxDeps } from '~/modules/mailbox/deps'
 import { trackerSafe } from '~/tracker-safe'
 
@@ -87,6 +94,8 @@ export type Container = {
   brandVoice: BrandVoiceDeps
   /** Everything the mailbox module needs; its service functions take this first. */
   mailboxes: MailboxDeps
+  /** Everything the LinkedIn module needs; its service functions take this first. */
+  linkedin: LinkedinDeps
   /** The queue consumer; built here, started by `server.ts` and stopped on shutdown. */
   consumer: Consumer
   /** Probes run by `/readyz`: the database. */
@@ -174,7 +183,12 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
   })
   if (env.ENVIRONMENT !== 'local') {
     logger.warn('ports still on fakes', {
-      ports: ['core access check', 'membership id and Team lookup'],
+      ports: [
+        'core access check',
+        'membership id and Team lookup',
+        'audience listing from core',
+        'audience check results',
+      ],
     })
   }
   const inOrganization: Container['withOrganization'] = (organizationId, fn) =>
@@ -208,6 +222,17 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
       openMs: env.PROVIDER_CIRCUIT_OPEN_MS,
       now: () => Date.now(),
     })
+  // Fails closed: the memory guard denies every Prospect, so local without core sends nothing.
+  const guardHttp =
+    env.ENVIRONMENT !== 'local' || env.CORE_URL !== undefined
+      ? createHttpContactGuard({
+          baseUrl: env.CORE_URL as string,
+          secret: env.CORE_INTERNAL_SECRET as string,
+          environment: env.ENVIRONMENT,
+          caller: 'outbound',
+          logger,
+        })
+      : undefined
   const enrichment: EnrichmentDeps = {
     store: createPostgresEnrichmentStore(inOrganization),
     core: coreHttp ?? core.prospects,
@@ -234,11 +259,25 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     store: createPostgresCampaignStore(inOrganization),
     access: core.access,
     clock: systemClock,
+    enrollments: createPostgresEnrollmentStore(inOrganization),
+    checks: createMemoryAudienceCheckStore(),
+    audience: core.audience,
+    guard: guardHttp ?? createMemoryContactGuard(),
+    queue,
+    logger,
   }
   const brandVoice: BrandVoiceDeps = {
     store: createPostgresBrandVoiceStore(inOrganization),
     access: core.access,
     clock: systemClock,
+  }
+  const linkedin: LinkedinDeps = {
+    store: createPostgresLinkedinStore(inOrganization),
+    access: core.access,
+    clock: systemClock,
+    // No vendor adapter exists yet: only local runs get the stand-in, anywhere else connecting is unavailable.
+    provider: env.ENVIRONMENT === 'local' ? createMemoryLinkedInProvider(systemClock) : null,
+    logger,
   }
   const mailboxes: MailboxDeps = {
     store: createPostgresMailboxStore(inOrganization),
@@ -299,7 +338,7 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     store: processed,
     logger,
     errorReporter: errors,
-    handlers: enrichmentHandlers(enrichment),
+    handlers: { ...enrichmentHandlers(enrichment), ...campaignHandlers(campaigns) },
     concurrency: env.CONSUMER_CONCURRENCY,
   })
 
@@ -320,6 +359,7 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     campaigns,
     brandVoice,
     mailboxes,
+    linkedin,
     consumer,
     readinessChecks: [
       {
@@ -336,6 +376,7 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     },
     close: async () => {
       coreHttp?.close()
+      guardHttp?.close()
       await errors.close(REPORTER_CLOSE_MS)
       await database.close()
     },

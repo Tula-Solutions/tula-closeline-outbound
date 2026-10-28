@@ -1,4 +1,11 @@
-import { enrichmentRunIdSchema, prospectIdSchema } from 'tula-closeline-contract'
+import {
+  campaignIdSchema,
+  enrichmentRunIdSchema,
+  prospectIdSchema,
+  roleSchema,
+  timestampSchema,
+  userIdSchema,
+} from 'tula-closeline-contract'
 import { createMessageRegistry, defineMessage, type EnvelopeOf } from 'tula-closeline-kit'
 import { z } from 'zod'
 
@@ -14,11 +21,39 @@ export const enrichmentRun = defineMessage({
   payload: z.object({ runId: enrichmentRunIdSchema, prospectId: prospectIdSchema }),
 })
 
+const countSoFar = z.number().int().min(0)
+
+/**
+ * Asks the consumer to check one page of a Campaign's audience: it carries the running counts and
+ * the cursor, and the handler publishes the next page, so no step holds the whole audience.
+ * `requestedAt` names the check; a page of a superseded check is dropped.
+ */
+export const audienceCheckPage = defineMessage({
+  type: 'audience.check_page',
+  version: 1,
+  scope: 'organization',
+  payload: z.object({
+    campaignId: campaignIdSchema,
+    audienceVersion: z.number().int().min(0),
+    requestedAt: timestampSchema,
+    cursor: z.string().max(200).nullable(),
+    viewer: z.object({ userId: userIdSchema, role: roleSchema }),
+    counts: z.object({
+      total: countSoFar,
+      verified: countSoFar,
+      suppressed: countSoFar,
+      noConsent: countSoFar,
+      activeInOtherCampaign: countSoFar,
+      eligible: countSoFar,
+    }),
+  }),
+})
+
 /** Every message type this service's queue carries. */
-export type OutboundDefinition = typeof enrichmentRun
+export type OutboundDefinition = typeof enrichmentRun | typeof audienceCheckPage
 
 /** An envelope of any type this service's queue carries. */
 export type OutboundEnvelope = EnvelopeOf<OutboundDefinition>
 
 /** Validates and builds the envelopes of {@link OutboundDefinition}; shared by the queue and publishers. */
-export const registry = createMessageRegistry([enrichmentRun])
+export const registry = createMessageRegistry([enrichmentRun, audienceCheckPage])
