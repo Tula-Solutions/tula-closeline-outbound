@@ -3,6 +3,7 @@ import {
   formatId,
   LINKEDIN_RISK_WORDING_VERSION,
   type LinkedinAccountId,
+  type LinkedinRiskAcceptanceId,
   type MembershipId,
   type OrganizationId,
 } from 'tula-closeline-contract'
@@ -123,6 +124,59 @@ export function describeLinkedinStore(label: string, make: () => LinkedinStoreHa
         enabled: false,
         accepted: false,
       })
+    })
+
+    const acceptance = (at: string) => ({
+      id: formatId('lra', crypto.randomUUID()) as LinkedinRiskAcceptanceId,
+      wordingVersion: LINKEDIN_RISK_WORDING_VERSION,
+      acceptedByMembershipId: formatId('mem', crypto.randomUUID()) as MembershipId,
+      typedFullName: 'Ada Admin',
+      acceptedAt: at,
+      revokedAt: null,
+    })
+
+    test('acceptances: one active per version, revoke keeps history, per Organization', async () => {
+      const { store } = make()
+      const a = org()
+      const first = await store.acceptRisk(a, acceptance('2026-01-01T00:00:00.000Z'))
+      expect(first.created).toBe(true)
+      const repeat = await store.acceptRisk(a, acceptance('2026-01-02T00:00:00.000Z'))
+      expect(repeat).toEqual({ record: first.record, created: false })
+      expect(await store.activeAcceptance(org(), LINKEDIN_RISK_WORDING_VERSION)).toBeNull()
+      expect(await store.revokeRisk(org(), '2026-01-03T00:00:00.000Z')).toBe(0)
+      expect(await store.revokeRisk(a, '2026-01-03T00:00:00.000Z')).toBe(1)
+      expect(await store.revokeRisk(a, '2026-01-04T00:00:00.000Z')).toBe(0)
+      expect(await store.activeAcceptance(a, LINKEDIN_RISK_WORDING_VERSION)).toBeNull()
+      const again = await store.acceptRisk(a, acceptance('2026-01-05T00:00:00.000Z'))
+      expect(again.created).toBe(true)
+      const page = await store.listAcceptances(a, null, 1)
+      expect(page.items[0]?.id).toBe(again.record.id)
+      const rest = await store.listAcceptances(a, page.next, 5)
+      expect(rest.items.map((r) => r.id)).toEqual([first.record.id])
+      expect(rest.items[0]?.revokedAt).toBe('2026-01-03T00:00:00.000Z')
+      expect(rest.next).toBeNull()
+      expect((await store.listAcceptances(org(), null, 5)).items).toEqual([])
+    })
+
+    test('concurrent accepts record one', async () => {
+      const { store } = make()
+      const a = org()
+      const results = await Promise.all(
+        [0, 1, 2, 3].map(() => store.acceptRisk(a, acceptance('2026-01-01T00:00:00.000Z')))
+      )
+      expect(results.filter((r) => r.created).length).toBe(1)
+      expect((await store.listAcceptances(a, null, 10)).items.length).toBe(1)
+    })
+
+    test('the switch answers what it was', async () => {
+      const { store } = make()
+      const a = org()
+      const by = formatId('mem', crypto.randomUUID()) as MembershipId
+      const at = '2026-01-01T00:00:00.000Z'
+      expect(await store.setEnabled(a, true, by, at)).toEqual({ previous: false })
+      expect(await store.setEnabled(a, false, by, at)).toEqual({ previous: true })
+      expect((await store.channelState(a, LINKEDIN_RISK_WORDING_VERSION)).enabled).toBe(false)
+      expect((await store.channelState(org(), LINKEDIN_RISK_WORDING_VERSION)).enabled).toBe(false)
     })
   })
 }

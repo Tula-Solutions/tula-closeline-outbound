@@ -1,4 +1,5 @@
 import {
+  type AcceptLinkedinRiskRequest,
   decodeCursor,
   ERRORS,
   type ErrorDefinition,
@@ -7,12 +8,18 @@ import {
   LINKEDIN_DAILY_CONNECTION_CEILING,
   LINKEDIN_DAILY_MESSAGE_CEILING,
   LINKEDIN_ERRORS,
+  LINKEDIN_RISK_WORDING,
   LINKEDIN_RISK_WORDING_VERSION,
   LINKEDIN_WEEKLY_CONNECTION_CEILING,
   type LinkedinAccount,
   type LinkedinAccountId,
+  type LinkedinRiskAcceptance,
+  type LinkedinRiskAcceptanceId,
+  type LinkedinRiskStatement,
+  type LinkedinSettings,
   linkedinAccountIdSchema,
   linkedinAccountSchema,
+  linkedinRiskAcceptanceSchema,
   type MembershipId,
   type OrganizationId,
   type Role,
@@ -23,8 +30,12 @@ import { z } from 'zod'
 import { describeError } from '~/describe-error'
 import { domainError } from '~/http/domain-error'
 import { LinkedInProviderError } from '~/ports/linkedin-provider'
-import type { LinkedinAccountRecord, LinkedinAccountStatus } from '~/ports/linkedin-store'
-import type { LinkedinDeps } from './deps'
+import type {
+  LinkedinAccountRecord,
+  LinkedinAccountStatus,
+  RiskAcceptanceRecord,
+} from '~/ports/linkedin-store'
+import type { LinkedinChannelDisabled, LinkedinDeps } from './deps'
 
 /** The largest page a list may ask for. */
 export const MAX_PAGE = 100
@@ -64,22 +75,32 @@ async function viewOf(deps: LinkedinDeps, caller: LinkedinCaller): Promise<View>
   return { me, owners: [me] }
 }
 
-/** Starts the calling Rep's connection: answers the hosted login; a repeat under the same key answers the same one. */
-export async function startConnection(
+/**
+ * Throws when LinkedIn may not be used: `linkedin.channel_disabled` with the switch off, else
+ * `linkedin.risk_not_accepted` without a non-revoked acceptance of the current wording. It reads
+ * the store each time, so a send job calls it and stops within one job cycle of a revoke or the
+ * switch going off; email jobs never call it.
+ */
+export async function assertChannelOpen(
   deps: LinkedinDeps,
-  caller: LinkedinCaller,
-  idempotencyKey: string
-): Promise<StartLinkedinConnectionResponse> {
-  const channel = await deps.store.channelState(
-    caller.organizationId,
-    LINKEDIN_RISK_WORDING_VERSION
-  )
+  organizationId: OrganizationId
+): Promise<void> {
+  const channel = await deps.store.channelState(organizationId, LINKEDIN_RISK_WORDING_VERSION)
   if (!channel.enabled) {
     throw linkedinError('linkedin.channel_disabled')
   }
   if (!channel.accepted) {
     throw linkedinError('linkedin.risk_not_accepted')
   }
+}
+
+/** Starts the calling Rep's connection: answers the hosted login; a repeat under the same key answers the same one. */
+export async function startConnection(
+  deps: LinkedinDeps,
+  caller: LinkedinCaller,
+  idempotencyKey: string
+): Promise<StartLinkedinConnectionResponse> {
+  await assertChannelOpen(deps, caller.organizationId)
   if (deps.provider === null) {
     throw domainError(ERRORS['server.unavailable'])
   }
@@ -235,4 +256,153 @@ export async function disconnect(
     organizationId: caller.organizationId,
     accountId: id,
   })
+}
+
+const acceptanceCursorSchema = z.strictObject({
+  acceptedAt: z.iso.datetime(),
+  id: z.string().regex(/^lra_/),
+})
+
+function presentAcceptance(record: RiskAcceptanceRecord): LinkedinRiskAcceptance {
+  return linkedinRiskAcceptanceSchema.parse(record)
+}
+
+/** The current risk statement; the same text for every Organization. */
+export function riskStatement(): LinkedinRiskStatement {
+  return { version: LINKEDIN_RISK_WORDING_VERSION, text: LINKEDIN_RISK_WORDING }
+}
+
+/** Publishes `linkedin.channel_disabled`; a failure is logged and never undoes the change that stopped the channel. */
+async function publishDisabled(
+  deps: LinkedinDeps,
+  organizationId: OrganizationId,
+  event: LinkedinChannelDisabled
+): Promise<void> {
+  try {
+    await deps.events(organizationId, event)
+  } catch (error) {
+    deps.logger.error('linkedin.channel_disabled was not published', {
+      organizationId,
+      error: describeError(error),
+    })
+  }
+}
+
+/**
+ * Records the Organization's acceptance of the current wording, signed with the typed name. An
+ * active acceptance of the same version is answered unchanged. Owner and Admin only (the router).
+ */
+export async function acceptRisk(
+  deps: LinkedinDeps,
+  caller: LinkedinCaller,
+  body: AcceptLinkedinRiskRequest
+): Promise<LinkedinRiskAcceptance> {
+  const me = await deps.access.membershipIdOf(caller.organizationId, caller.userId)
+  const result = await deps.store.acceptRisk(caller.organizationId, {
+    id: formatId('lra', crypto.randomUUID()) as LinkedinRiskAcceptanceId,
+    wordingVersion: body.wordingVersion,
+    acceptedByMembershipId: me,
+    typedFullName: body.typedFullName,
+    acceptedAt: deps.clock.now().toISOString(),
+    revokedAt: null,
+  })
+  if (result.created) {
+    deps.logger.info('linkedin.risk_accepted', {
+      organizationId: caller.organizationId,
+      acceptanceId: result.record.id,
+      wordingVersion: body.wordingVersion,
+    })
+  }
+  return presentAcceptance(result.record)
+}
+
+/** Revokes the active acceptance; with none it changes nothing. Sends stop at their next channel check. */
+export async function revokeRisk(deps: LinkedinDeps, caller: LinkedinCaller): Promise<void> {
+  const at = deps.clock.now().toISOString()
+  // Looked up first: a failure here must leave nothing revoked, or a retry would lose the event.
+  const me = await deps.access.membershipIdOf(caller.organizationId, caller.userId)
+  const revoked = await deps.store.revokeRisk(caller.organizationId, at)
+  if (revoked === 0) {
+    return
+  }
+  deps.logger.info('linkedin.risk_revoked', { organizationId: caller.organizationId })
+  await publishDisabled(deps, caller.organizationId, {
+    reason: 'acceptance_revoked',
+    byMembershipId: me,
+    at,
+  })
+}
+
+/** The Organization's acceptances, newest first: who accepted, the typed name, the version and any revocation. */
+export async function listAcceptances(
+  deps: LinkedinDeps,
+  caller: LinkedinCaller,
+  query: { cursor?: string | undefined; limit: number }
+): Promise<{ items: LinkedinRiskAcceptance[]; nextCursor: string | null }> {
+  let after = null
+  if (query.cursor !== undefined) {
+    const position = decodeCursor(query.cursor, acceptanceCursorSchema)
+    if (position === undefined) {
+      throw domainError(ERRORS['request.invalid'])
+    }
+    after = { acceptedAt: position.acceptedAt, id: position.id as LinkedinRiskAcceptanceId }
+  }
+  const page = await deps.store.listAcceptances(
+    caller.organizationId,
+    after,
+    Math.min(query.limit, MAX_PAGE)
+  )
+  return {
+    items: page.items.map(presentAcceptance),
+    nextCursor: page.next === null ? null : encodeCursor(page.next),
+  }
+}
+
+/** The switch, the current wording, when it was accepted, and whether LinkedIn is usable. */
+export async function getSettings(
+  deps: LinkedinDeps,
+  caller: LinkedinCaller
+): Promise<LinkedinSettings> {
+  const channel = await deps.store.channelState(
+    caller.organizationId,
+    LINKEDIN_RISK_WORDING_VERSION
+  )
+  const acceptance = channel.accepted
+    ? await deps.store.activeAcceptance(caller.organizationId, LINKEDIN_RISK_WORDING_VERSION)
+    : null
+  return {
+    enabled: channel.enabled,
+    currentWordingVersion: LINKEDIN_RISK_WORDING_VERSION,
+    acceptedAt: acceptance?.acceptedAt ?? null,
+    effectivelyEnabled: channel.enabled && acceptance !== null,
+  }
+}
+
+/** Flips the Admin switch. On needs an active acceptance of the current wording; off publishes `linkedin.channel_disabled`. */
+export async function updateSettings(
+  deps: LinkedinDeps,
+  caller: LinkedinCaller,
+  enabled: boolean
+): Promise<LinkedinSettings> {
+  if (enabled) {
+    const channel = await deps.store.channelState(
+      caller.organizationId,
+      LINKEDIN_RISK_WORDING_VERSION
+    )
+    if (!channel.accepted) {
+      throw linkedinError('linkedin.risk_not_accepted')
+    }
+  }
+  const me = await deps.access.membershipIdOf(caller.organizationId, caller.userId)
+  const at = deps.clock.now().toISOString()
+  const { previous } = await deps.store.setEnabled(caller.organizationId, enabled, me, at)
+  if (previous && !enabled) {
+    deps.logger.info('linkedin.channel_switched_off', { organizationId: caller.organizationId })
+    await publishDisabled(deps, caller.organizationId, {
+      reason: 'admin_switch',
+      byMembershipId: me,
+      at,
+    })
+  }
+  return getSettings(deps, caller)
 }
