@@ -102,6 +102,22 @@ timeout. Microsoft has no per-app revoke, so `revoke` is a no-op and disconnecti
 tokens; `interaction_required` and `invalid_grant` both mean `grant_invalid`. Not run against real
 Microsoft yet.
 
+## LinkedIn (`src/modules/linkedin`)
+
+- Routes: `POST /v1/linkedin/accounts/connection` (Rep only, Idempotency-Key, answers the provider's
+  hosted login), `GET /v1/linkedin/accounts[/{accountId}]`, `DELETE /v1/linkedin/accounts/{accountId}`.
+  Visibility is the Mailbox rule: Owner and Admin all, Manager self plus their Team's Reps, Rep self.
+- Start needs the channel enabled (`linkedin.channel_disabled`) and the current risk wording accepted
+  (`linkedin.risk_not_accepted`); the Admin switch and acceptance routes are the next ticket, and the
+  store only reads them.
+- Disconnect is for the owning Rep, or an Owner or Admin for a leaver; anyone else gets
+  `linkedin.not_account_owner`. `closeline_outbound` cannot delete rows, so disconnect sets the status
+  and a reconnect reuses the row, its id and its limits. A repeat is a no-op.
+- `ports/linkedin-provider.ts` has only the memory adapter: the vendor is undecided. With no provider
+  (anything but `ENVIRONMENT=local`) start answers `server.unavailable`.
+- `completeConnection` (service) records a finished hosted login; no route calls it until the
+  provider webhook ticket. The provider's account reference is stored and never returned or logged.
+
 ## Brand voice (`src/modules/brand-voice`)
 
 The Organization's Brand Voice (`/v1/brand-voice`): `GET` the current one (any role,
