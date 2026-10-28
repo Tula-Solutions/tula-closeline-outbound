@@ -35595,6 +35595,1132 @@
           }
         }
       }
+    },
+    "/v1/campaigns/{campaignId}/preview": {
+      "post": {
+        "description": "Shows what a Campaign's Step would send to one to five named Prospects, at the Sequence version given (the first email Step when stepKey is left out). More than five Prospects is preview.too_many_prospects (422); a stale Sequence version is campaign.sequence_version_conflict (409). Each row is a Research Brief and Draft, or the failure code that stopped that Prospect (draft.no_prospect_data, draft.model_unavailable, draft.budget_exceeded, research.timeout); one failing row does not fail the call. A named Prospect outside the caller's view fails the whole call with prospect.not_found (404). Nothing is sent, and no Contact Consent or suppression state changes; sending is checked by core at send time (ADR 0003). Requires an Idempotency-Key header: a replay answers the same result and does the work once. Model output is untrusted data: statements and Draft text are shown with their Citations, never run as instructions, and never put in a log or an event. An Owner or Admin sees every Prospect; a Manager those owned by Reps on their Team; a Rep only their own. A Prospect (prospect.not_found), Campaign (campaign.not_found), Research Brief (research.not_found) or Draft (draft.not_found) outside the caller's view is its not_found code (404), never 403, and one of another Organization the same.",
+        "tags": [
+          "previews"
+        ],
+        "summary": "Preview a Campaign Step on sample Prospects",
+        "security": [
+          {
+            "accessToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^cpg_[0-9a-f]{32}$"
+            },
+            "required": true,
+            "name": "campaignId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_.:-]+$",
+              "description": "Names this preview; nothing is stored under it."
+            },
+            "required": true,
+            "description": "Names this preview; nothing is stored under it.",
+            "name": "idempotency-key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "sequenceVersion": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1000000
+                  },
+                  "stepKey": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 40,
+                    "pattern": "^[a-z][a-z0-9_-]*$"
+                  },
+                  "prospectIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^prs_[0-9a-f]{32}$"
+                    },
+                    "minItems": 1,
+                    "maxItems": 50
+                  }
+                },
+                "required": [
+                  "sequenceVersion",
+                  "prospectIds"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A Brief and Draft for each Prospect, or the failure code that stopped it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "sequenceVersion": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 1000000
+                    },
+                    "stepKey": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 40,
+                      "pattern": "^[a-z][a-z0-9_-]*$"
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "prospectId": {
+                            "type": "string",
+                            "pattern": "^prs_[0-9a-f]{32}$"
+                          },
+                          "brief": {
+                            "type": [
+                              "object",
+                              "null"
+                            ],
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "pattern": "^brf_[0-9a-f]{32}$"
+                              },
+                              "prospectId": {
+                                "type": "string",
+                                "pattern": "^prs_[0-9a-f]{32}$"
+                              },
+                              "statements": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "text": {
+                                      "type": "string",
+                                      "maxLength": 1000
+                                    },
+                                    "source": {
+                                      "oneOf": [
+                                        {
+                                          "type": "object",
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string",
+                                              "enum": [
+                                                "prospect_field"
+                                              ]
+                                            },
+                                            "prospectId": {
+                                              "type": "string",
+                                              "pattern": "^prs_[0-9a-f]{32}$"
+                                            },
+                                            "field": {
+                                              "type": "string",
+                                              "enum": [
+                                                "firstName",
+                                                "lastName",
+                                                "jobTitle",
+                                                "email",
+                                                "phone",
+                                                "linkedinUrl"
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "prospectId",
+                                            "field"
+                                          ]
+                                        },
+                                        {
+                                          "type": "object",
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string",
+                                              "enum": [
+                                                "signal"
+                                              ]
+                                            },
+                                            "signalId": {
+                                              "type": "string",
+                                              "pattern": "^sig_[0-9a-f]{32}$"
+                                            },
+                                            "observedAt": {
+                                              "type": "string",
+                                              "maxLength": 64,
+                                              "format": "date-time"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "signalId",
+                                            "observedAt"
+                                          ]
+                                        },
+                                        {
+                                          "type": "object",
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string",
+                                              "enum": [
+                                                "web_page"
+                                              ]
+                                            },
+                                            "url": {
+                                              "type": "string",
+                                              "maxLength": 2048
+                                            },
+                                            "retrievedAt": {
+                                              "type": "string",
+                                              "maxLength": 64,
+                                              "format": "date-time"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "url",
+                                            "retrievedAt"
+                                          ]
+                                        },
+                                        {
+                                          "type": "object",
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string",
+                                              "enum": [
+                                                "moment"
+                                              ]
+                                            },
+                                            "callId": {
+                                              "type": "string",
+                                              "pattern": "^call_[0-9a-f]{32}$"
+                                            },
+                                            "dealRecordId": {
+                                              "type": "string",
+                                              "pattern": "^deal_[0-9a-f]{32}$"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "callId",
+                                            "dealRecordId"
+                                          ]
+                                        },
+                                        {
+                                          "type": "object",
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string",
+                                              "enum": [
+                                                "document"
+                                              ]
+                                            },
+                                            "documentId": {
+                                              "type": "string",
+                                              "pattern": "^doc_[0-9a-f]{32}$"
+                                            },
+                                            "page": {
+                                              "type": [
+                                                "integer",
+                                                "null"
+                                              ],
+                                              "minimum": 1,
+                                              "maximum": 300
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "documentId",
+                                            "page"
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "text",
+                                    "source"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                "minItems": 1,
+                                "maxItems": 20
+                              },
+                              "angle": {
+                                "type": "object",
+                                "properties": {
+                                  "text": {
+                                    "type": "string",
+                                    "maxLength": 1000
+                                  },
+                                  "origin": {
+                                    "type": "string",
+                                    "enum": [
+                                      "won_deals",
+                                      "model_default"
+                                    ]
+                                  },
+                                  "sources": {
+                                    "type": "array",
+                                    "items": {
+                                      "oneOf": [
+                                        {
+                                          "type": "object",
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string",
+                                              "enum": [
+                                                "prospect_field"
+                                              ]
+                                            },
+                                            "prospectId": {
+                                              "type": "string",
+                                              "pattern": "^prs_[0-9a-f]{32}$"
+                                            },
+                                            "field": {
+                                              "type": "string",
+                                              "enum": [
+                                                "firstName",
+                                                "lastName",
+                                                "jobTitle",
+                                                "email",
+                                                "phone",
+                                                "linkedinUrl"
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "prospectId",
+                                            "field"
+                                          ]
+                                        },
+                                        {
+                                          "type": "object",
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string",
+                                              "enum": [
+                                                "signal"
+                                              ]
+                                            },
+                                            "signalId": {
+                                              "type": "string",
+                                              "pattern": "^sig_[0-9a-f]{32}$"
+                                            },
+                                            "observedAt": {
+                                              "type": "string",
+                                              "maxLength": 64,
+                                              "format": "date-time"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "signalId",
+                                            "observedAt"
+                                          ]
+                                        },
+                                        {
+                                          "type": "object",
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string",
+                                              "enum": [
+                                                "web_page"
+                                              ]
+                                            },
+                                            "url": {
+                                              "type": "string",
+                                              "maxLength": 2048
+                                            },
+                                            "retrievedAt": {
+                                              "type": "string",
+                                              "maxLength": 64,
+                                              "format": "date-time"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "url",
+                                            "retrievedAt"
+                                          ]
+                                        },
+                                        {
+                                          "type": "object",
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string",
+                                              "enum": [
+                                                "moment"
+                                              ]
+                                            },
+                                            "callId": {
+                                              "type": "string",
+                                              "pattern": "^call_[0-9a-f]{32}$"
+                                            },
+                                            "dealRecordId": {
+                                              "type": "string",
+                                              "pattern": "^deal_[0-9a-f]{32}$"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "callId",
+                                            "dealRecordId"
+                                          ]
+                                        },
+                                        {
+                                          "type": "object",
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string",
+                                              "enum": [
+                                                "document"
+                                              ]
+                                            },
+                                            "documentId": {
+                                              "type": "string",
+                                              "pattern": "^doc_[0-9a-f]{32}$"
+                                            },
+                                            "page": {
+                                              "type": [
+                                                "integer",
+                                                "null"
+                                              ],
+                                              "minimum": 1,
+                                              "maximum": 300
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "documentId",
+                                            "page"
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    "maxItems": 20
+                                  }
+                                },
+                                "required": [
+                                  "text",
+                                  "origin",
+                                  "sources"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "droppedCount": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 1000
+                              },
+                              "prospectUpdatedAt": {
+                                "type": "string",
+                                "maxLength": 64,
+                                "format": "date-time"
+                              },
+                              "language": {
+                                "type": "string",
+                                "enum": [
+                                  "en"
+                                ]
+                              },
+                              "model": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 100
+                              },
+                              "createdAt": {
+                                "type": "string",
+                                "maxLength": 64,
+                                "format": "date-time"
+                              },
+                              "expiresAt": {
+                                "type": "string",
+                                "maxLength": 64,
+                                "format": "date-time"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "prospectId",
+                              "statements",
+                              "angle",
+                              "droppedCount",
+                              "prospectUpdatedAt",
+                              "language",
+                              "model",
+                              "createdAt",
+                              "expiresAt"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "draft": {
+                            "type": [
+                              "object",
+                              "null"
+                            ],
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "pattern": "^drf_[0-9a-f]{32}$"
+                              },
+                              "prospectId": {
+                                "type": "string",
+                                "pattern": "^prs_[0-9a-f]{32}$"
+                              },
+                              "campaignId": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ],
+                                "pattern": "^cpg_[0-9a-f]{32}$"
+                              },
+                              "stepKey": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ],
+                                "minLength": 1,
+                                "maxLength": 40,
+                                "pattern": "^[a-z][a-z0-9_-]*$"
+                              },
+                              "channel": {
+                                "type": "string",
+                                "enum": [
+                                  "email"
+                                ]
+                              },
+                              "goal": {
+                                "type": "string",
+                                "maxLength": 1000
+                              },
+                              "language": {
+                                "type": "string",
+                                "enum": [
+                                  "en"
+                                ]
+                              },
+                              "subject": {
+                                "type": "string",
+                                "maxLength": 400
+                              },
+                              "body": {
+                                "type": "string",
+                                "maxLength": 10000
+                              },
+                              "revision": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 10000
+                              },
+                              "source": {
+                                "type": "string",
+                                "enum": [
+                                  "generated",
+                                  "edited"
+                                ]
+                              },
+                              "citations": {
+                                "type": "array",
+                                "items": {
+                                  "allOf": [
+                                    {
+                                      "oneOf": [
+                                        {
+                                          "type": "object",
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string",
+                                              "enum": [
+                                                "prospect_field"
+                                              ]
+                                            },
+                                            "prospectId": {
+                                              "type": "string",
+                                              "pattern": "^prs_[0-9a-f]{32}$"
+                                            },
+                                            "field": {
+                                              "type": "string",
+                                              "enum": [
+                                                "firstName",
+                                                "lastName",
+                                                "jobTitle",
+                                                "email",
+                                                "phone",
+                                                "linkedinUrl"
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "prospectId",
+                                            "field"
+                                          ]
+                                        },
+                                        {
+                                          "type": "object",
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string",
+                                              "enum": [
+                                                "signal"
+                                              ]
+                                            },
+                                            "signalId": {
+                                              "type": "string",
+                                              "pattern": "^sig_[0-9a-f]{32}$"
+                                            },
+                                            "observedAt": {
+                                              "type": "string",
+                                              "maxLength": 64,
+                                              "format": "date-time"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "signalId",
+                                            "observedAt"
+                                          ]
+                                        },
+                                        {
+                                          "type": "object",
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string",
+                                              "enum": [
+                                                "web_page"
+                                              ]
+                                            },
+                                            "url": {
+                                              "type": "string",
+                                              "maxLength": 2048
+                                            },
+                                            "retrievedAt": {
+                                              "type": "string",
+                                              "maxLength": 64,
+                                              "format": "date-time"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "url",
+                                            "retrievedAt"
+                                          ]
+                                        },
+                                        {
+                                          "type": "object",
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string",
+                                              "enum": [
+                                                "moment"
+                                              ]
+                                            },
+                                            "callId": {
+                                              "type": "string",
+                                              "pattern": "^call_[0-9a-f]{32}$"
+                                            },
+                                            "dealRecordId": {
+                                              "type": "string",
+                                              "pattern": "^deal_[0-9a-f]{32}$"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "callId",
+                                            "dealRecordId"
+                                          ]
+                                        },
+                                        {
+                                          "type": "object",
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string",
+                                              "enum": [
+                                                "document"
+                                              ]
+                                            },
+                                            "documentId": {
+                                              "type": "string",
+                                              "pattern": "^doc_[0-9a-f]{32}$"
+                                            },
+                                            "page": {
+                                              "type": [
+                                                "integer",
+                                                "null"
+                                              ],
+                                              "minimum": 1,
+                                              "maximum": 300
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "documentId",
+                                            "page"
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "applies": {
+                                          "type": "boolean"
+                                        },
+                                        "score": {
+                                          "type": "number"
+                                        }
+                                      },
+                                      "required": [
+                                        "applies"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "maxItems": 20
+                              },
+                              "ungrounded": {
+                                "type": "boolean"
+                              },
+                              "wonDealCount": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 100
+                              },
+                              "checks": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "check": {
+                                      "type": "string",
+                                      "enum": [
+                                        "citations_resolve",
+                                        "claims_supported",
+                                        "banned_phrase",
+                                        "length",
+                                        "name_match"
+                                      ]
+                                    },
+                                    "result": {
+                                      "type": "string",
+                                      "enum": [
+                                        "pass",
+                                        "fail"
+                                      ]
+                                    },
+                                    "count": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 1000
+                                    }
+                                  },
+                                  "required": [
+                                    "check",
+                                    "result",
+                                    "count"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "autoSendable": {
+                                "type": "boolean"
+                              },
+                              "brandVoiceId": {
+                                "type": "string",
+                                "pattern": "^bvo_[0-9a-f]{32}$"
+                              },
+                              "voiceVersion": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 1000000
+                              },
+                              "briefId": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ],
+                                "pattern": "^brf_[0-9a-f]{32}$"
+                              },
+                              "model": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 100
+                              },
+                              "createdAt": {
+                                "type": "string",
+                                "maxLength": 64,
+                                "format": "date-time"
+                              },
+                              "updatedAt": {
+                                "type": "string",
+                                "maxLength": 64,
+                                "format": "date-time"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "prospectId",
+                              "campaignId",
+                              "stepKey",
+                              "channel",
+                              "goal",
+                              "language",
+                              "subject",
+                              "body",
+                              "revision",
+                              "source",
+                              "citations",
+                              "ungrounded",
+                              "wonDealCount",
+                              "checks",
+                              "autoSendable",
+                              "brandVoiceId",
+                              "voiceVersion",
+                              "briefId",
+                              "model",
+                              "createdAt",
+                              "updatedAt"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "failureCode": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "enum": [
+                              "draft.no_prospect_data",
+                              "draft.model_unavailable",
+                              "draft.budget_exceeded",
+                              "research.timeout",
+                              null
+                            ]
+                          }
+                        },
+                        "required": [
+                          "prospectId",
+                          "brief",
+                          "draft",
+                          "failureCode"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "minItems": 1,
+                      "maxItems": 5
+                    }
+                  },
+                  "required": [
+                    "sequenceVersion",
+                    "stepKey",
+                    "items"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "request.invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "auth.unauthenticated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "auth.forbidden.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "campaign.not_found, prospect.not_found, voice.not_found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "campaign.sequence_version_conflict, request.idempotency_in_progress.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^[1-9][0-9]*$",
+                  "description": "Whole seconds to wait before trying again."
+                },
+                "required": true,
+                "description": "Whole seconds to wait before trying again."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "preview.too_many_prospects, request.idempotency_key_reused.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "server.internal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "webhooks": {}

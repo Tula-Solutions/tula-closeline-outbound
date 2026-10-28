@@ -15,6 +15,7 @@ import { createHealthRouter } from '~/modules/health/router'
 import { createLinkedinRouter } from '~/modules/linkedin/router'
 import { createMailboxRouter } from '~/modules/mailbox/router'
 import { createMailEventRouter } from '~/modules/mailevent/router'
+import { createPreviewRouter } from '~/modules/preview/router'
 import { createResearchRouter } from '~/modules/research/router'
 import { createSendRouter } from '~/modules/send/router'
 import { createSignalRouter, createSignalWebhookRouter } from '~/modules/signal/router'
@@ -51,6 +52,10 @@ export function createApp(container: Container): OpenAPIHono<AppEnv> {
   publicRoutes.route('/', createLinkedinRouter(container.linkedin))
   publicRoutes.route('/', createResearchRouter(container.research))
   publicRoutes.route('/', createDraftRouter(container.drafts))
+  publicRoutes.route(
+    '/',
+    createPreviewRouter({ campaigns: container.campaigns, drafts: container.drafts })
+  )
   app.route('/', publicRoutes)
 
   serveOpenApi(app)

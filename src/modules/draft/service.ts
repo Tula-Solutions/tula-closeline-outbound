@@ -266,7 +266,8 @@ async function compose(
   }
 }
 
-async function assertVisible(deps: DraftDeps, caller: DraftCaller, prospectId: ProspectId) {
+/** Throws `prospect.not_found` when the Prospect is outside the caller's view. */
+export async function assertVisible(deps: DraftDeps, caller: DraftCaller, prospectId: ProspectId) {
   const { notVisible } = await deps.research.access.inspect(caller, [prospectId])
   if (notVisible.length > 0) {
     throw domainError(PROSPECT_ERRORS['prospect.not_found'])
@@ -274,6 +275,29 @@ async function assertVisible(deps: DraftDeps, caller: DraftCaller, prospectId: P
 }
 
 const draftNotFound = () => domainError(MESSAGING_ERRORS['draft.not_found'])
+
+function newDraft(
+  deps: DraftDeps,
+  request: DraftRequest,
+  goal: string,
+  written: Awaited<ReturnType<typeof compose>>
+): OutreachDraft {
+  const now = deps.clock.now().toISOString()
+  return outreachDraftSchema.parse({
+    id: formatId('drf', randomBytes(16).toString('hex')),
+    prospectId: request.prospectId,
+    campaignId: request.campaignId ?? null,
+    stepKey: request.stepKey ?? null,
+    channel: 'email',
+    goal,
+    language: 'en',
+    revision: 1,
+    source: 'generated',
+    createdAt: now,
+    updatedAt: now,
+    ...written,
+  })
+}
 
 async function create(
   deps: DraftDeps,
@@ -297,21 +321,7 @@ async function create(
     briefKeyOf(key),
     defaultVoice
   )
-  const now = deps.clock.now().toISOString()
-  const draft = outreachDraftSchema.parse({
-    id: formatId('drf', randomBytes(16).toString('hex')),
-    prospectId: request.prospectId,
-    campaignId: request.campaignId ?? null,
-    stepKey: request.stepKey ?? null,
-    channel: 'email',
-    goal,
-    language: 'en',
-    revision: 1,
-    source: 'generated',
-    createdAt: now,
-    updatedAt: now,
-    ...written,
-  })
+  const draft = newDraft(deps, request, goal, written)
   const outcome = await deps.store.insert(organizationId, draft, key, request.variantKey ?? null)
   if (outcome === 'reused') {
     throw domainError(ERRORS['request.idempotency_key_reused'])
@@ -440,4 +450,23 @@ export async function obtainForStep(
     true
   )
   return { ...outcome.draft, variantKey: outcome.variantKey }
+}
+
+/**
+ * Writes a Draft and its Research Brief for a preview and stores no Draft: nothing is inserted, no
+ * default Brand Voice is saved (`voice.not_found` when there is none). The Brief is the Brief cache's,
+ * built or reused under `key`. The caller has checked the Prospect is visible.
+ */
+export async function previewDraft(
+  deps: DraftDeps,
+  organizationId: OrganizationId,
+  request: DraftRequest & { goal: string },
+  key: string
+) {
+  const written = await compose(deps, organizationId, request, briefKeyOf(storedKey(key)))
+  const brief = await deps.research.store.get(organizationId, written.briefId)
+  if (brief === null) {
+    throw new Error('the Brief a preview rests on is not stored')
+  }
+  return { draft: newDraft(deps, request, request.goal, written), brief }
 }
