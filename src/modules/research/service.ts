@@ -130,7 +130,7 @@ function playbookSource(passage: PlaybookPassage): Omit<Source, 'id'> {
   }
 }
 
-/** Asks the model, retrying a failure a bounded number of times with jittered backoff. */
+/** Asks the model once: the adapter already retries with jittered backoff, so a second layer would multiply. */
 async function askModel(
   deps: ResearchDeps,
   organizationId: string,
@@ -140,31 +140,25 @@ async function askModel(
   if (model === null) {
     throw domainError(MESSAGING_ERRORS['draft.model_unavailable'])
   }
-  const { modelMaxTries, modelTimeoutMs, retryBaseMs } = deps.limits
-  for (let attempt = 1; ; attempt++) {
-    try {
-      const result = await withDeadline(modelTimeoutMs, (signal) =>
-        model.generate({
-          instructions: INSTRUCTIONS,
-          sources,
-          maxOutputTokens: 2000,
-          organizationId,
-          signal,
-        })
-      )
-      if (result === 'timeout') {
-        throw new Error('model timeout')
-      }
-      return result
-    } catch (error) {
-      if (error instanceof ModelBudgetExceededError) {
-        throw domainError(MESSAGING_ERRORS['draft.budget_exceeded'])
-      }
-      if (attempt >= modelMaxTries) {
-        throw domainError(MESSAGING_ERRORS['draft.model_unavailable'])
-      }
-      await deps.sleep(retryBaseMs * 2 ** (attempt - 1) * (0.5 + deps.random() / 2))
+  try {
+    const result = await withDeadline(deps.limits.modelTimeoutMs, (signal) =>
+      model.generate({
+        instructions: INSTRUCTIONS,
+        sources,
+        maxOutputTokens: 2000,
+        organizationId,
+        signal,
+      })
+    )
+    if (result === 'timeout') {
+      throw new Error('model timeout')
     }
+    return result
+  } catch (error) {
+    if (error instanceof ModelBudgetExceededError) {
+      throw domainError(MESSAGING_ERRORS['draft.budget_exceeded'])
+    }
+    throw domainError(MESSAGING_ERRORS['draft.model_unavailable'])
   }
 }
 

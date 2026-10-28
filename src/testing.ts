@@ -386,8 +386,6 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
       web: researchWeb,
       playbook: researchPlaybook,
       clock: time.clock,
-      sleep: time.sleep,
-      random: () => 0.5,
       logger,
       limits: researchLimits(env),
     },

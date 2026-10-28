@@ -228,25 +228,21 @@ describe('Research Brief', () => {
   })
 
   test('a spent model budget answers draft.budget_exceeded and is not retried', async () => {
-    const w = await world({ RESEARCH_MODEL_MAX_TRIES: '3' })
+    const w = await world()
     const prospect = w.seed(w.admin)
-    w.t.deps.research.sleep = async () => undefined
     w.t.deps.researchModel.script(new ModelBudgetExceededError())
     const refused = await w.brief(w.admin, prospect)
     expect(codeOf(refused.body)).toBe('draft.budget_exceeded')
     expect(w.t.deps.researchModel.requests).toHaveLength(1)
   })
 
-  test('model failures are retried a bounded number of times, then draft.model_unavailable', async () => {
-    const w = await world({ RESEARCH_MODEL_MAX_TRIES: '2' })
+  test('a failing model is asked once: the adapter owns retries', async () => {
+    const w = await world()
     const prospect = w.seed(w.admin)
-    w.t.deps.research.sleep = async () => undefined // virtual time never moves on its own
-    w.t.deps.researchModel.script(new Error('boom'))
     w.t.deps.researchModel.script(new Error('boom'))
     const failed = await w.brief(w.admin, prospect)
     expect(codeOf(failed.body)).toBe('draft.model_unavailable')
-    expect(w.t.deps.researchModel.requests).toHaveLength(2)
-    w.t.deps.researchModel.script(new Error('boom'))
+    expect(w.t.deps.researchModel.requests).toHaveLength(1)
     expect((await w.brief(w.admin, prospect)).status).toBe(201)
   })
 
@@ -297,10 +293,8 @@ describe('Research Brief', () => {
     })
 
     test('a failed build under a key is retried under the same key and stored once', async () => {
-      const w = await world({ RESEARCH_MODEL_MAX_TRIES: '2' })
+      const w = await world()
       const prospect = w.seed(w.admin)
-      w.t.deps.research.sleep = async () => undefined
-      w.t.deps.researchModel.script(new Error('boom'))
       w.t.deps.researchModel.script(new Error('boom'))
       const failed = await post(w, prospect)
       expect(codeOf(failed.body)).toBe('draft.model_unavailable')

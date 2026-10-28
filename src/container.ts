@@ -375,8 +375,6 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     web: ai.web,
     playbook: local ? createMemoryPlaybookSearch() : null,
     clock: systemClock,
-    sleep: systemSleep,
-    random: Math.random,
     logger,
     limits: researchLimits(env),
   }

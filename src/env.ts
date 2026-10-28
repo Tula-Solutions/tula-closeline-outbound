@@ -170,9 +170,7 @@ const schema = z
     /** The longest one model call for a Research Brief may take, in ms. */
     RESEARCH_MODEL_TIMEOUT_MS: integer(10, 120_000).default(20_000),
     /** The most times the model is asked for one Research Brief (the first try included). */
-    RESEARCH_MODEL_MAX_TRIES: integer(1, 5).default(2),
     /** The first model retry delay before jitter, in ms; it doubles per try. */
-    RESEARCH_RETRY_BASE_MS: integer(1, 60_000).default(200),
     /** How long a Research Brief stays reusable for an unchanged Prospect, in seconds. */
     RESEARCH_BRIEF_TTL_SECONDS: integer(60, 2_592_000).default(259_200),
     /** How long a run stays claimed by one worker before another may take it over, in seconds. */

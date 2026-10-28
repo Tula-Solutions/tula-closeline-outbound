@@ -55,8 +55,8 @@ outside `local`; the adapter is `src/adapters/http/core.ts`), `CORE_CALL_TIMEOUT
 (a local-only key, refused in staging and prod), `MAIL_CALL_TIMEOUT_MS`, `MAIL_CALL_MAX_TRIES`,
 `MAIL_RETRY_BASE_MS`, and for enrichment vendors `APOLLO_BASE_URL`, `ZEROBOUNCE_BASE_URL`,
 `PROVIDER_CIRCUIT_FAILURES`, `PROVIDER_CIRCUIT_OPEN_MS`, and for Research Briefs
-`RESEARCH_WEB_DEADLINE_MS`, `RESEARCH_MODEL_TIMEOUT_MS`, `RESEARCH_MODEL_MAX_TRIES`,
-`RESEARCH_RETRY_BASE_MS`, `RESEARCH_BRIEF_TTL_SECONDS`. Add a key in both files.
+`RESEARCH_WEB_DEADLINE_MS`, `RESEARCH_MODEL_TIMEOUT_MS`,
+`RESEARCH_BRIEF_TTL_SECONDS`. Add a key in both files.
 
 ## Campaigns (`src/modules/campaign`)
 
