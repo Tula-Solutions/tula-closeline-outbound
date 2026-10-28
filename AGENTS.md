@@ -142,11 +142,15 @@ search. The model gets fixed instructions and the material as numbered sources (
 separate data channel; a statement whose `sourceId` is not one of them, or that fails the contract's
 schema, is dropped and counted in `droppedCount`. A web timeout answers `research.timeout` with
 `details.sources` (the pages that had arrived, marked `partial`) and keeps nothing. A Brief is reused
-(200) while the Prospect's values and fresh Signal ids are unchanged and it has not expired;
-`refresh: true` builds a new one (201). Ports: `Model`, `WebSearch`, `PlaybookSearch`, `BriefStore`,
-all with memory adapters only (the vendor is undecided, #290): outside `local` the model is null and
-a Brief answers `draft.model_unavailable`. The store is in process memory (core serves no Prospect
-update time to key a Postgres cache on); logs carry ids and counts only.
+(200) while the Prospect's `updatedAt` is the one it was built from and it has not expired (core's
+enrichment-input route serves no `updatedAt` yet, so over HTTP every call builds); `refresh: true`
+builds a new one (201). The `Idempotency-Key` is stored on the Brief (`request_key`, unique per
+Organization): a replay answers that Brief (200), the key for another Prospect is
+`request.idempotency_key_reused`, and of two racing requests one insert wins and the other answers
+its Brief. `BriefStore` is Postgres (`outbound.briefs`, `outbound.brief_statements`) with a memory
+twin for tests; `Model`, `WebSearch` and `PlaybookSearch` have memory adapters only (the vendor is
+undecided, #290): outside `local` the model is null and a Brief answers `draft.model_unavailable`.
+Logs carry ids and counts only.
 
 ## Signals and fit (`src/modules/signal`, `src/modules/fit`)
 

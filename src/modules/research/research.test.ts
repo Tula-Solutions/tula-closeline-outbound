@@ -265,7 +265,36 @@ describe('Research Brief', () => {
       const prospect = w.seed(w.admin)
       const [a, b] = await Promise.all([post(w, prospect), post(w, prospect)])
       expect(a.body.id).toBe(b.body.id)
-      expect(w.t.deps.researchModel.requests).toHaveLength(1)
+      expect(
+        (await w.call('GET', `/v1/prospects/${prospect}/briefs`, w.admin)).body.items
+      ).toHaveLength(1)
+    })
+
+    test('a failed build under a key is retried under the same key and stored once', async () => {
+      const w = await world({ RESEARCH_MODEL_MAX_TRIES: '2' })
+      const prospect = w.seed(w.admin)
+      w.t.deps.research.sleep = async () => undefined
+      w.t.deps.researchModel.script(new Error('boom'))
+      w.t.deps.researchModel.script(new Error('boom'))
+      const failed = await post(w, prospect)
+      expect(codeOf(failed.body)).toBe('draft.model_unavailable')
+      const retried = await post(w, prospect)
+      expect(retried.status).toBe(201)
+      expect((await post(w, prospect)).body.id).toBe(retried.body.id)
+      expect(
+        (await w.call('GET', `/v1/prospects/${prospect}/briefs`, w.admin)).body.items
+      ).toHaveLength(1)
+    })
+
+    test('a Brief is rebuilt after the Prospect changes and reused until then', async () => {
+      const w = await world()
+      const prospect = w.seed(w.admin)
+      const first = await w.brief(w.admin, prospect)
+      expect((await w.brief(w.admin, prospect)).body.id).toBe(first.body.id)
+      w.t.deps.core.importField(w.admin.organizationId, prospect, 'jobTitle', 'Chief Zorb')
+      const second = await w.brief(w.admin, prospect)
+      expect(second.status).toBe(201)
+      expect(second.body.id).not.toBe(first.body.id)
     })
 
     test('the same key for another Prospect is request.idempotency_key_reused', async () => {

@@ -25,7 +25,6 @@ import { createGmailMailTransport } from '~/adapters/gmail/mail-transport'
 import { createGraphMailTransport } from '~/adapters/graph/mail-transport'
 import { createHttpCoreProspects } from '~/adapters/http/core'
 import { createMemoryAudienceCheckStore } from '~/adapters/memory/audience-check-store'
-import { createMemoryBriefStore } from '~/adapters/memory/brief-store'
 import { createMemoryCore } from '~/adapters/memory/core'
 import { createMemoryLinkedInProvider } from '~/adapters/memory/linkedin-provider'
 import { createMemoryMailTransport } from '~/adapters/memory/mail-transport'
@@ -34,6 +33,7 @@ import { createMemoryPlaybookSearch } from '~/adapters/memory/playbook-search'
 import { createMemorySecretBox } from '~/adapters/memory/secret-box'
 import { createMemoryWebSearch } from '~/adapters/memory/web-search'
 import { createPostgresBrandVoiceStore } from '~/adapters/postgres/brand-voice-store'
+import { createPostgresBriefStore } from '~/adapters/postgres/brief-store'
 import { createPostgresCampaignStore } from '~/adapters/postgres/campaign-store'
 import { createPostgresEnrollmentStore } from '~/adapters/postgres/enrollment-store'
 import { createPostgresFitStore } from '~/adapters/postgres/fit-store'
@@ -305,9 +305,9 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
   }
   const local = env.ENVIRONMENT === 'local'
   // shortcut: the model and web search are memory stand-ins (no vendor chosen, #290), so outside
-  // `local` there is no model and briefs answer draft.model_unavailable; the store is in process memory.
+  // `local` there is no model and briefs answer draft.model_unavailable.
   const research: ResearchDeps = {
-    store: createMemoryBriefStore(),
+    store: createPostgresBriefStore(inOrganization),
     core: prospectsCore,
     access: core.access,
     signals,

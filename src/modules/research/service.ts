@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 import {
   type BriefId,
   type BriefStatement,
@@ -79,14 +79,6 @@ async function assertVisible(deps: ResearchDeps, caller: ResearchCaller, prospec
   }
 }
 
-/** The one-way version of the Prospect: its values and fresh Signal ids, since core serves no update time. */
-function fingerprintOf(values: Record<string, string | undefined>, signalIds: readonly string[]) {
-  const sorted = Object.entries(values).sort(([a], [b]) => a.localeCompare(b))
-  return createHash('sha256')
-    .update(JSON.stringify([sorted, [...signalIds].sort()]))
-    .digest('hex')
-}
-
 /** Runs `work` with a deadline; on expiry aborts it and returns 'timeout'. */
 async function withDeadline<T>(ms: number, work: (signal: AbortSignal) => Promise<T>) {
   const controller = new AbortController()
@@ -158,7 +150,11 @@ async function askModel(deps: ResearchDeps, sources: readonly ModelSource[]): Pr
   }
 }
 
-/** Builds a Research Brief for a Prospect, or answers the cached one (`created` false) while its Prospect is unchanged. */
+/**
+ * Builds a Research Brief for a Prospect, or answers the cached one (`created` false) while the
+ * Prospect has not changed since it was built. A replay of an Idempotency-Key answers the Brief that
+ * key built; the key for another Prospect is `request.idempotency_key_reused`.
+ */
 export async function createBrief(
   deps: ResearchDeps,
   caller: ResearchCaller,
@@ -167,21 +163,21 @@ export async function createBrief(
 ): Promise<BriefOutcome> {
   const { organizationId } = caller
   await assertVisible(deps, caller, prospectId)
-  const requestHash = `${prospectId}:${options.refresh}`
-  const outcome = await deps.store.once(organizationId, options.idempotencyKey, requestHash, () =>
-    buildBrief(deps, caller, prospectId, options.refresh)
-  )
-  if (outcome === 'reused') {
-    throw domainError(ERRORS['request.idempotency_key_reused'])
+  const earlier = await deps.store.byRequestKey(organizationId, options.idempotencyKey)
+  if (earlier !== null) {
+    if (earlier.prospectId !== prospectId) {
+      throw domainError(ERRORS['request.idempotency_key_reused'])
+    }
+    return { brief: earlier, created: false }
   }
-  return outcome
+  return buildBrief(deps, caller, prospectId, options)
 }
 
 async function buildBrief(
   deps: ResearchDeps,
   caller: ResearchCaller,
   prospectId: ProspectId,
-  refresh: boolean
+  options: { refresh: boolean; idempotencyKey: string }
 ): Promise<BriefOutcome> {
   const { organizationId } = caller
   const input = await deps.core.getEnrichmentInput(organizationId, prospectId)
@@ -192,24 +188,23 @@ async function buildBrief(
     throw domainError(MESSAGING_ERRORS['draft.model_unavailable'])
   }
   const now = deps.clock.now()
-  const signals = await Signals.listFresh(deps.signals, organizationId, prospectId, {
-    limit: MAX_SIGNALS,
-  })
   const values: Record<string, string | undefined> = { ...input.values }
-  const fingerprint = fingerprintOf(
-    values,
-    signals.map((s) => s.id)
-  )
-  if (!refresh) {
+  // shortcut: core's enrichment-input route serves no update time, so a Prospect read over HTTP is
+  // never matched to a cached Brief; upgrade when core serves `updatedAt` on an internal route.
+  const prospectUpdatedAt = input.updatedAt ?? now.toISOString()
+  if (!options.refresh && input.updatedAt !== undefined) {
     const cached = await deps.store.newest(organizationId, prospectId)
     if (
       cached !== null &&
-      cached.fingerprint === fingerprint &&
-      new Date(cached.brief.expiresAt) > now
+      new Date(cached.prospectUpdatedAt).getTime() === new Date(input.updatedAt).getTime() &&
+      new Date(cached.expiresAt) > now
     ) {
-      return { brief: cached.brief, created: false }
+      return { brief: cached, created: false }
     }
   }
+  const signals = await Signals.listFresh(deps.signals, organizationId, prospectId, {
+    limit: MAX_SIGNALS,
+  })
 
   const sources: Source[] = []
   const add = (source: Omit<Source, 'id'>) => {
@@ -328,22 +323,22 @@ async function buildBrief(
       sources: wonDeals ? angleSources : [],
     },
     droppedCount: dropped,
-    prospectUpdatedAt: now.toISOString(),
+    prospectUpdatedAt,
     language: 'en',
     model: deps.model.name,
     createdAt: now.toISOString(),
     expiresAt: new Date(now.getTime() + deps.limits.briefTtlMs).toISOString(),
   })
-  await deps.store.insert(organizationId, { brief, fingerprint })
+  const outcome = await deps.store.insert(organizationId, brief, options.idempotencyKey)
   // Ids and counts only: never a Prospect field or brief text.
   deps.logger.info('research.brief_built', {
     organizationId,
     prospectId,
-    briefId: brief.id,
-    statements: statements.length,
+    briefId: outcome.brief.id,
+    statements: outcome.brief.statements.length,
     dropped,
   })
-  return { brief, created: true }
+  return outcome
 }
 
 async function searchWeb(deps: ResearchDeps, query: string) {

@@ -17,6 +17,8 @@ export type FieldApplication = (typeof FIELD_APPLICATIONS)[number]
 export type EnrichmentInput = {
   prospectId: ProspectId
   values: ProspectValues
+  /** When core last changed the Prospect, or undefined when the route serving the input does not say. */
+  updatedAt?: string
 }
 
 /** One field to write back, with the provider it came from. */
