@@ -33,6 +33,7 @@ import {
   createMemoryCoreSuppression,
   type MemoryCoreSuppression,
 } from '~/adapters/memory/core-suppression'
+import { createMemoryDraftStore } from '~/adapters/memory/draft-store'
 import {
   createMemoryApprovals,
   createMemoryDraftSource,
@@ -270,6 +271,18 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     clock: time.clock,
     events: publishSignal,
   }
+  const research: Container['research'] = {
+    store: createMemoryBriefStore(),
+    core: core.prospects,
+    access: core.access,
+    signals,
+    model: researchModel,
+    web: researchWeb,
+    playbook: researchPlaybook,
+    clock: time.clock,
+    logger,
+    limits: researchLimits(env),
+  }
   const fit: Container['fit'] = {
     store: createMemoryFitStore(),
     core: core.prospects,
@@ -377,17 +390,13 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     brandVoice,
     mailboxes,
     signals,
-    research: {
-      store: createMemoryBriefStore(),
-      core: core.prospects,
-      access: core.access,
-      signals,
-      model: researchModel,
-      web: researchWeb,
-      playbook: researchPlaybook,
+    research,
+    drafts: {
+      store: createMemoryDraftStore(),
+      voices: brandVoice.store,
+      research,
       clock: time.clock,
       logger,
-      limits: researchLimits(env),
     },
     researchModel,
     researchWeb,

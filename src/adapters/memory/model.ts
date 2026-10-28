@@ -23,6 +23,13 @@ export function createMemoryModel(): MemoryModel {
         return {
           statements: request.sources.slice(0, 20).map((s) => ({ text: s.text, sourceId: s.id })),
           angle: { text: 'Open with what changed for them recently.', sourceIds: [] },
+          // The Draft module reads these; the Brief ignores them.
+          subject: 'A quick idea',
+          body: 'Hi, a short note based on what we know.',
+          claims: request.sources
+            .filter((s) => !s.id.startsWith('ctx-'))
+            .slice(0, 20)
+            .map((s) => ({ text: s.text, sourceId: s.id })),
         }
       }
       const answer = typeof next === 'function' ? next(request) : next

@@ -21,7 +21,7 @@ import { contractRoute, failureResponses, type ResearchRouteName, rolesOf } from
 import * as Research from './service'
 
 /** Refuses a role the contract does not list for the route with `auth.forbidden`, before the body is read. */
-function requireRoles(name: ResearchRouteName): MiddlewareHandler<AuthedEnv> {
+export function requireRoles(name: ResearchRouteName): MiddlewareHandler<AuthedEnv> {
   return async (c, next) => {
     if (!rolesOf(name).includes(callerOf(c).role)) {
       throw domainError(ERRORS['auth.forbidden'])

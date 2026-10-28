@@ -12,12 +12,13 @@ import type { InOrganization } from './store'
 type Tx = Parameters<Parameters<InOrganization>[1]>[0]
 type BriefRow = typeof outboundBriefs.$inferSelect
 type EntryRow = typeof outboundBriefStatements.$inferSelect
-type SourceColumns = Pick<EntryRow, `source${string}` & keyof EntryRow>
+/** The source columns a Brief entry and a Draft Citation share. */
+export type SourceColumns = Pick<EntryRow, `source${string}` & keyof EntryRow>
 
 const iso = (date: Date | null) => (date === null ? null : date.toISOString())
 
 /** The citation a stored row rests on; the contract parses the whole Brief afterwards. */
-function citationOf(row: EntryRow): unknown {
+export function citationOf(row: SourceColumns): unknown {
   switch (row.sourceKind) {
     case 'prospect_field':
       return { kind: row.sourceKind, prospectId: row.sourceProspectId, field: row.sourceField }
@@ -41,7 +42,7 @@ function citationOf(row: EntryRow): unknown {
 }
 
 /** The source columns of a citation; the columns of the other kinds stay null, as the checks require. */
-function columnsOf(source: CitationSource): SourceColumns {
+export function columnsOf(source: CitationSource): SourceColumns {
   const none: SourceColumns = {
     sourceKind: source.kind,
     sourceProspectId: null,
