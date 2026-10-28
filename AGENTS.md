@@ -49,6 +49,8 @@ The shape in `.claude/COMMON.md` is built; add modules under `src/modules/<name>
 outside `local`; the adapter is `src/adapters/http/core.ts`), `CORE_CALL_TIMEOUT_MS`,
 `CORE_CALL_MAX_TRIES`, and for Mailboxes `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`,
 `GOOGLE_AUTH_URL`, `GOOGLE_TOKEN_URL`, `GOOGLE_REVOKE_URL`, `GMAIL_API_BASE_URL`,
+`MICROSOFT_CLIENT_ID`/`MICROSOFT_CLIENT_SECRET`, `MICROSOFT_AUTH_URL`, `MICROSOFT_TOKEN_URL`,
+`GRAPH_API_BASE_URL`,
 `MAIL_OAUTH_REDIRECT_URI`, `MAIL_STATE_SECRET` (required outside `local`), `MAIL_SECRET_BOX_KEY`
 (a local-only key, refused in staging and prod), `MAIL_CALL_TIMEOUT_MS`, `MAIL_CALL_MAX_TRIES`,
 `MAIL_RETRY_BASE_MS`. Add a key in both files.
@@ -79,8 +81,9 @@ table; the shortcut comments say when to upgrade), so outside `local` the servic
 
 ## Mailboxes (`src/modules/mailbox`)
 
-Connect, list and disconnect Gmail Mailboxes (`/v1/mailboxes`). Ports: `mail-transport.ts` (memory
-and Gmail adapters, one shared behaviour suite), `mailbox-store.ts` (memory and Postgres) and
+Connect, list and disconnect Gmail and Outlook Mailboxes (`/v1/mailboxes`); `deps.transports` is
+keyed by provider. Ports: `mail-transport.ts` (memory, Gmail and Graph adapters, one shared behaviour
+suite; `adapters/provider-call.ts` is their shared timeout/retry), `mailbox-store.ts` (memory and Postgres) and
 `secret-box.ts` (tokens are sealed with the Organization, Mailbox and purpose as context; the AES
 adapter takes a local key, KMS comes with infra). Start returns the consent URL with a signed,
 expiring `state` (HMAC, bound to Organization and user, no table); complete verifies it, exchanges
@@ -92,6 +95,25 @@ report. A revoked grant (`MailTransportError('grant_invalid')`) disconnects the 
 functions the send path uses; sending is never retried after an unknown outcome. A Rep sees their
 own Mailboxes, a Manager their Team's, an Owner or Admin all; shared Mailboxes are Owner/Admin only.
 A live Gmail test runs only when `GMAIL_LIVE_REFRESH_TOKEN` is set.
+Outlook (`adapters/graph`): OAuth with PKCE on tenant `common`, identity from Graph `/me`. A send is
+create-draft from MIME (so Exchange threads by the headers and returns the message and conversation
+ids) then `/send`; the draft call retries on 5xx, the send step only on 429/503, never after a
+timeout. Microsoft has no per-app revoke, so `revoke` is a no-op and disconnecting deletes the
+tokens; `interaction_required` and `invalid_grant` both mean `grant_invalid`. Not run against real
+Microsoft yet.
+
+## Brand voice (`src/modules/brand-voice`)
+
+The Organization's Brand Voice (`/v1/brand-voice`): `GET` the current one (any role,
+`voice.not_found` before the first save), `PUT` to save a new version (Owner and Admin, needs an
+`Idempotency-Key`), `GET /versions` for the history, newest first (Owner and Admin, as the contract
+says). Store port `ports/brand-voice-store.ts` (memory and Postgres); a save runs under a per-
+Organization advisory lock, so `expectedVersion` decides and the loser gets `voice.version_conflict`.
+Every version keeps its own id (derived from Organization and version) and stays readable, since a
+Draft names the exact version it used. The body is checked by the service, not the router, so an
+empty or oversized value, an unknown field or a banned phrase that is also preferred answers
+`voice.invalid`. A repeat of the last save answers that version. The contract and database have no
+default-language field, so there is none yet.
 
 ## Hot paths
 

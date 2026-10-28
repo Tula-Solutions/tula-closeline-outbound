@@ -73,8 +73,14 @@ export interface MailTransport {
     code: string
     codeVerifier: string
   }): Promise<{ tokens: GrantTokens; account: ConnectedAccount }>
-  /** A new access token for the grant. Throws `grant_invalid` when the grant was revoked. */
-  refresh(refreshToken: string): Promise<{ accessToken: string; expiresAt: string }>
+  /**
+   * A new access token for the grant, and a new refresh token when the provider rotates them (the
+   * caller must store it, since the old one eventually expires). Throws `grant_invalid` when the
+   * grant was revoked.
+   */
+  refresh(
+    refreshToken: string
+  ): Promise<{ accessToken: string; expiresAt: string; refreshToken?: string }>
   /** Revokes the grant at the provider; revoking one already revoked is not an error. */
   revoke(token: string): Promise<void>
   /** Sends one email. Never retried after an unknown outcome: a timeout may have sent it. */

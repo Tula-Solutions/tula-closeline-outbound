@@ -24,6 +24,7 @@ import {
   type VirtualTime,
 } from 'tula-closeline-kit/testing'
 import { createMemoryAudienceCheckStore } from '~/adapters/memory/audience-check-store'
+import { createMemoryBrandVoiceStore } from '~/adapters/memory/brand-voice-store'
 import { createMemoryCampaignStore } from '~/adapters/memory/campaign-store'
 import { createMemoryCore, type MemoryCore } from '~/adapters/memory/core'
 import { createMemoryEnrollmentStore } from '~/adapters/memory/enrollment-store'
@@ -69,6 +70,8 @@ export type TestDeps = Container & {
   errors: MemoryErrorReporter
   /** The Gmail stand-in: consent as a person, revoke a grant, fail the provider, read what was sent. */
   mail: MemoryMailTransport
+  /** The Outlook stand-in, same controls. */
+  outlookMail: MemoryMailTransport
   /** Every `mailbox.state_changed` published, in order. */
   mailEvents: { organizationId: string; event: MailboxStateChanged }[]
   /** Every JSON log line written, in order. */
@@ -165,9 +168,20 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     logger,
   }
 
+  const brandVoice: Container['brandVoice'] = {
+    store: createMemoryBrandVoiceStore(),
+    access: core.access,
+    clock: time.clock,
+  }
+
   const mail = createMemoryMailTransport({
     clock: time.clock,
     redirectUri: env.MAIL_OAUTH_REDIRECT_URI,
+  })
+  const outlookMail = createMemoryMailTransport({
+    clock: time.clock,
+    redirectUri: env.MAIL_OAUTH_REDIRECT_URI,
+    provider: 'outlook',
   })
   const mailEvents: TestDeps['mailEvents'] = []
   const mailboxes: Container['mailboxes'] = {
@@ -175,7 +189,7 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     access: core.access,
     clock: time.clock,
     secretBox: createMemorySecretBox(),
-    transports: { gmail: mail },
+    transports: { gmail: mail, outlook: outlookMail },
     stateSecret: env.MAIL_STATE_SECRET,
     events: async (organizationId, event) => {
       mailEvents.push({ organizationId, event })
@@ -196,8 +210,10 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     processed,
     enrichment,
     campaigns,
+    brandVoice,
     mailboxes,
     mail,
+    outlookMail,
     mailEvents,
     core,
     guard,
