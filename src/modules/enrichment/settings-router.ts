@@ -2,8 +2,11 @@ import { createRoute, type OpenAPIHono } from '@hono/zod-openapi'
 import type { MiddlewareHandler } from 'hono'
 import {
   ERRORS,
+  enrichmentBudgetSchema,
   listProvidersQuerySchema,
   listProvidersResponseSchema,
+  listSpendQuerySchema,
+  listSpendResponseSchema,
   providerKeySchema,
   providerSettingsSchema,
   setProviderRequestSchema,
@@ -110,6 +113,37 @@ const setWaterfallRoute = createRoute({
   },
 })
 
+const getBudgetRoute = createRoute({
+  ...contractRoute('getEnrichmentBudget'),
+  middleware: requireRoles('getEnrichmentBudget'),
+  tags: ['enrichment'],
+  summary: "Read this month's enrichment budget",
+  security: [{ [PUBLIC_SECURITY]: [] }],
+  responses: {
+    200: {
+      description: 'The limits, what is spent and left, and when the month resets.',
+      content: { 'application/json': { schema: enrichmentBudgetSchema } },
+    },
+    ...failureResponses('getEnrichmentBudget'),
+  },
+})
+
+const listSpendRoute = createRoute({
+  ...contractRoute('listEnrichmentSpend'),
+  middleware: requireRoles('listEnrichmentSpend'),
+  tags: ['enrichment'],
+  summary: 'List enrichment spend by month and provider',
+  security: [{ [PUBLIC_SECURITY]: [] }],
+  request: { query: listSpendQuerySchema },
+  responses: {
+    200: {
+      description: 'A page of spend, newest month first.',
+      content: { 'application/json': { schema: listSpendResponseSchema } },
+    },
+    ...failureResponses('listEnrichmentSpend'),
+  },
+})
+
 /** The provider settings and waterfall routes under `/v1/enrichment`. */
 export function createSettingsRouter(deps: EnrichmentDeps): OpenAPIHono<AuthedEnv> {
   const router = createRouter<AuthedEnv>()
@@ -135,5 +169,11 @@ export function createSettingsRouter(deps: EnrichmentDeps): OpenAPIHono<AuthedEn
     c.req.valid('header')
     return c.json(await Settings.setWaterfall(deps, callerOf(c), c.req.valid('json')), 200)
   })
+  router.openapi(getBudgetRoute, async (c) =>
+    c.json(await Settings.getBudget(deps, callerOf(c)), 200)
+  )
+  router.openapi(listSpendRoute, async (c) =>
+    c.json(await Settings.listSpend(deps, callerOf(c), c.req.valid('query')), 200)
+  )
   return router
 }
