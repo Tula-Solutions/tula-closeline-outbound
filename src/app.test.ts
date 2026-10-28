@@ -22,6 +22,8 @@ test('the app serves its OpenAPI document describing every route and the error b
   expect(Object.keys(document.paths).sort()).toEqual([
     '/healthz',
     '/readyz',
+    '/v1/brand-voice',
+    '/v1/brand-voice/versions',
     '/v1/campaigns',
     '/v1/campaigns/{campaignId}',
     '/v1/campaigns/{campaignId}/archive',

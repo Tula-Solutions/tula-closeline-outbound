@@ -21,6 +21,7 @@ import {
   mintTestToken,
   type VirtualTime,
 } from 'tula-closeline-kit/testing'
+import { createMemoryBrandVoiceStore } from '~/adapters/memory/brand-voice-store'
 import { createMemoryCampaignStore } from '~/adapters/memory/campaign-store'
 import { createMemoryCore, type MemoryCore } from '~/adapters/memory/core'
 import {
@@ -151,6 +152,12 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     clock: time.clock,
   }
 
+  const brandVoice: Container['brandVoice'] = {
+    store: createMemoryBrandVoiceStore(),
+    access: core.access,
+    clock: time.clock,
+  }
+
   const mail = createMemoryMailTransport({
     clock: time.clock,
     redirectUri: env.MAIL_OAUTH_REDIRECT_URI,
@@ -182,6 +189,7 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     processed,
     enrichment,
     campaigns,
+    brandVoice,
     mailboxes,
     mail,
     mailEvents,
