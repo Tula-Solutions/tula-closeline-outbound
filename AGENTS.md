@@ -66,6 +66,19 @@ running Campaign accepts it and the version applies to new Steps only. Every mut
 mapping until core exposes it; the database has no column for automatic variant promotion, so only
 `promotion.mode: 'manual'` is accepted.
 
+Enrollments and the audience check (`enrollment.ts`, `audience.ts`; stores `ports/enrollment-store.ts`,
+memory and Postgres). `POST .../enrollments` takes up to 100 Prospect ids into a running or paused
+Campaign, judged one by one: out of view is `not_found`, a Prospect in another active Campaign or
+this one is `already_active`, and the kit `ContactGuard` (core's Contact Check, channel email,
+`agent_initiated`) decides the rest. `consent.suppressed` stops the Enrollment as `suppressed`; any
+other denial, including core being unreachable, stops it as `no_consent` (fails closed, no setting
+skips it). Each Prospect has one row per Campaign, so a re-run makes no duplicate. The audience
+check (`audience.check_page` queue message) walks core's Prospects 100 at a time, one message per
+page carrying the running counts, so no request or job holds the whole list. `CoreAudience` and the
+audience-check store are memory adapters only (core has no internal list route and the db no check
+table; the shortcut comments say when to upgrade), so outside `local` the service warns.
+`enrollment.stopped` is logged by id only; there is no event bus yet.
+
 ## Mailboxes (`src/modules/mailbox`)
 
 Connect, list and disconnect Gmail and Outlook Mailboxes (`/v1/mailboxes`); `deps.transports` is
