@@ -17,9 +17,11 @@ import {
 } from 'tula-closeline-contract'
 import { z } from 'zod'
 import { domainError } from '~/http/domain-error'
+import { versionId } from '~/modules/brand-voice/service'
 import * as Research from '~/modules/research/service'
 import type { AccessCaller } from '~/ports/core'
 import type { DraftOutcome } from '~/ports/draft-store'
+import type { VariantDraft } from '~/ports/engine'
 import type { ModelSource } from '~/ports/model'
 import type { PlaybookPassage } from '~/ports/playbook-search'
 import { runChecks } from './checks'
@@ -28,7 +30,7 @@ import type { DraftDeps } from './deps'
 /** Who is calling, with their own bearer so core's view rules decide which Prospects they see. */
 export type DraftCaller = AccessCaller
 
-/** What a Draft is written for. `variantKey` is carried for the variant module and not used here yet. */
+/** What a Draft is written for. `variantKey` names the Campaign variant it is written for, kept with the Draft. */
 export type DraftRequest = {
   prospectId: ProspectId
   campaignId?: CampaignId
@@ -40,6 +42,14 @@ export type DraftRequest = {
 }
 
 const DEFAULT_GOAL = 'Start a conversation'
+/** The voice an Organization that has set none is written in, saved once as its first version. */
+const DEFAULT_VOICE = {
+  tone: 'Plain, polite and professional',
+  preferredWords: [],
+  bannedPhrases: [],
+  signOff: null,
+  maxLengthCharacters: 1500,
+}
 const MAX_PLAYBOOK = 10
 const MAX_CLAIMS = 100
 /** Ids of material the model reads but may not cite (Brand Voice, goal, angle, tone). */
@@ -90,10 +100,31 @@ async function compose(
   deps: DraftDeps,
   organizationId: OrganizationId,
   request: DraftRequest & { goal: string },
-  briefKey: string
+  briefKey: string,
+  defaultVoice = false
 ) {
   const { research } = deps
-  const voice = await deps.voices.current(organizationId)
+  let voice = await deps.voices.current(organizationId)
+  if (voice === null && defaultVoice) {
+    // A save races safely: the id is fixed per Organization and version, and `save` returns the winner.
+    voice = await deps.voices.save(organizationId, (current) =>
+      current !== null
+        ? { kind: 'unchanged' }
+        : {
+            kind: 'save',
+            voice: {
+              ...DEFAULT_VOICE,
+              id: versionId(organizationId, 1),
+              version: 1,
+              createdByMembershipId: formatId(
+                'mem',
+                sha(`${organizationId}:default-voice`).slice(0, 32)
+              ),
+              createdAt: deps.clock.now().toISOString(),
+            },
+          }
+    )
+  }
   if (voice === null) {
     throw domainError(MESSAGING_ERRORS['voice.not_found'])
   }
@@ -248,17 +279,24 @@ async function create(
   deps: DraftDeps,
   organizationId: OrganizationId,
   request: DraftRequest,
-  key: string
+  key: string,
+  defaultVoice = false
 ): Promise<DraftOutcome> {
   const earlier = await deps.store.byRequestKey(organizationId, key)
   if (earlier !== null) {
-    if (earlier.prospectId !== request.prospectId) {
+    if (earlier.draft.prospectId !== request.prospectId) {
       throw domainError(ERRORS['request.idempotency_key_reused'])
     }
-    return { draft: earlier, created: false }
+    return { ...earlier, created: false }
   }
   const goal = request.goal ?? DEFAULT_GOAL
-  const written = await compose(deps, organizationId, { ...request, goal }, briefKeyOf(key))
+  const written = await compose(
+    deps,
+    organizationId,
+    { ...request, goal },
+    briefKeyOf(key),
+    defaultVoice
+  )
   const now = deps.clock.now().toISOString()
   const draft = outreachDraftSchema.parse({
     id: formatId('drf', randomBytes(16).toString('hex')),
@@ -274,7 +312,7 @@ async function create(
     updatedAt: now,
     ...written,
   })
-  const outcome = await deps.store.insert(organizationId, draft, key)
+  const outcome = await deps.store.insert(organizationId, draft, key, request.variantKey ?? null)
   if (outcome === 'reused') {
     throw domainError(ERRORS['request.idempotency_key_reused'])
   }
@@ -376,13 +414,30 @@ export async function regenerateDraft(
 
 /**
  * The Draft of an email Step for the Sequence engine: the same Draft for a repeat of the same Step
- * of the same Campaign and Prospect.
+ * of the same Campaign and Prospect, with the variant it was first written for.
  */
 export async function obtainForStep(
   deps: DraftDeps,
   organizationId: OrganizationId,
-  request: { prospectId: ProspectId; campaignId: CampaignId; stepKey: string; goal: string }
-): Promise<OutreachDraft> {
+  request: {
+    prospectId: ProspectId
+    campaignId: CampaignId
+    stepKey: string
+    goal: string
+    variant?: { key: string; angle: string }
+  }
+): Promise<VariantDraft> {
   const key = storedKey(`step:${request.campaignId}:${request.stepKey}:${request.prospectId}`)
-  return (await create(deps, organizationId, request, key)).draft
+  const { variant, ...rest } = request
+  const outcome = await create(
+    deps,
+    organizationId,
+    {
+      ...rest,
+      ...(variant === undefined ? {} : { angle: variant.angle, variantKey: variant.key }),
+    },
+    key,
+    true
+  )
+  return { ...outcome.draft, variantKey: outcome.variantKey }
 }

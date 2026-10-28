@@ -7,10 +7,17 @@ import {
   enrollmentSchema,
   formatId,
 } from 'tula-closeline-contract'
-import type { Database } from 'tula-closeline-db'
-import { outboundEnrollmentEvents, outboundEnrollments } from 'tula-closeline-db/schema'
+import type { Database, Transaction } from 'tula-closeline-db'
+import {
+  outboundEnrollmentEvents,
+  outboundEnrollments,
+  outboundVariantStats,
+} from 'tula-closeline-db/schema'
 import type { EnrollmentStore } from '~/ports/enrollment-store'
 import type { InOrganization } from './store'
+
+/** A Step has at most 4 variants. */
+const MAX_VARIANTS = 4
 
 type Row = typeof outboundEnrollments.$inferSelect
 type EventRow = typeof outboundEnrollmentEvents.$inferSelect
@@ -65,6 +72,85 @@ function eventRow(organizationId: string, event: EnrollmentEvent) {
   }
 }
 
+type Tally = 'sent' | 'replied' | 'bounced' | 'unsubscribed'
+
+const TALLY_OF_STOP: Partial<Record<NonNullable<EnrollmentEvent['stopReason']>, Tally>> = {
+  replied: 'replied',
+  hard_bounce: 'bounced',
+  unsubscribed: 'unsubscribed',
+}
+
+/**
+ * Adds one to a tally of the Campaign's current Sequence version. shortcut: a variant the current
+ * version no longer has is skipped (never fails the send or stop), and a stop is credited to the
+ * current version, not the one it was sent under; a running Campaign cannot save a Sequence.
+ */
+async function addToTally(
+  tx: Transaction,
+  organizationId: OrganizationId,
+  campaignId: string,
+  stepKey: string,
+  variantKey: string,
+  column: Tally
+) {
+  const col = sql.raw(`"${column}"`)
+  await tx.execute(sql`
+    insert into outbound.variant_stats
+      (organization_id, campaign_id, version, step_key, variant_key, ${col})
+    select ${organizationId}, c.id, c.sequence_version, ${stepKey}, ${variantKey}, 1
+    from outbound.campaigns c
+    where c.organization_id = ${organizationId} and c.id = ${campaignId}
+      and exists (
+        select 1 from outbound.variants v
+        where v.organization_id = c.organization_id and v.campaign_id = c.id
+          and v.version = c.sequence_version and v.step_key = ${stepKey} and v.key = ${variantKey})
+    on conflict (organization_id, campaign_id, version, step_key, variant_key)
+    do update set ${col} = outbound.variant_stats.${col} + 1`)
+}
+
+/**
+ * Adds the events just written to the variant tallies, in the same transaction: a `sent` that names
+ * a variant counts a send, and a stop that replies, bounces or unsubscribes counts for the variant
+ * of the Enrollment's latest send (so a reader never scans the log).
+ */
+async function tally(
+  tx: Transaction,
+  organizationId: OrganizationId,
+  campaignId: string,
+  enrollmentId: string,
+  events: readonly EnrollmentEvent[]
+) {
+  for (const e of events) {
+    if (e.kind === 'sent' && e.variantKey !== null && e.stepKey !== null) {
+      await addToTally(tx, organizationId, campaignId, e.stepKey, e.variantKey, 'sent')
+    }
+  }
+  for (const e of events) {
+    const column =
+      e.kind === 'stopped' && e.stopReason !== null ? TALLY_OF_STOP[e.stopReason] : undefined
+    if (column === undefined) {
+      continue
+    }
+    const t = outboundEnrollmentEvents
+    const [last] = await tx
+      .select({ stepKey: t.stepKey, variantKey: t.variantKey })
+      .from(t)
+      .where(
+        and(
+          eq(t.organizationId, organizationId),
+          eq(t.enrollmentId, enrollmentId),
+          eq(t.kind, 'sent'),
+          isNotNull(t.variantKey)
+        )
+      )
+      .orderBy(desc(t.occurredAt), desc(t.id))
+      .limit(1)
+    if (last?.stepKey != null && last.variantKey !== null) {
+      await addToTally(tx, organizationId, campaignId, last.stepKey, last.variantKey, column)
+    }
+  }
+}
+
 /**
  * The Enrollment store over Postgres; each call runs in one transaction scoped to the Organization.
  * `db` is the unscoped handle, used only to ask which Organizations have work due.
@@ -102,6 +188,7 @@ export function createPostgresEnrollmentStore(
             await tx
               .insert(outboundEnrollmentEvents)
               .values(events.map((event) => eventRow(organizationId, event)))
+            await tally(tx, organizationId, enrollment.campaignId, enrollment.id, events)
           }
           return { enrollment: enrollmentOf(row), created: true }
         }
@@ -239,19 +326,19 @@ export function createPostgresEnrollmentStore(
         if (updated === undefined) {
           throw new Error('enrollment vanished while locked')
         }
-        await tx.insert(outboundEnrollmentEvents).values(
-          eventRow(organizationId, {
-            id: formatId('eev', Bun.randomUUIDv7()),
-            enrollmentId: id,
-            kind: 'stopped',
-            stepKey: null,
-            variantKey: null,
-            sendId: null,
-            stopReason: reason,
-            actorMembershipId: actor,
-            occurredAt: at,
-          })
-        )
+        const stopped: EnrollmentEvent = {
+          id: formatId('eev', Bun.randomUUIDv7()),
+          enrollmentId: id,
+          kind: 'stopped',
+          stepKey: null,
+          variantKey: null,
+          sendId: null,
+          stopReason: reason,
+          actorMembershipId: actor,
+          occurredAt: at,
+        }
+        await tx.insert(outboundEnrollmentEvents).values(eventRow(organizationId, stopped))
+        await tally(tx, organizationId, updated.campaignId, id, [stopped])
         return { enrollment: enrollmentOf(updated), stopped: true }
       }),
 
@@ -369,6 +456,7 @@ export function createPostgresEnrollmentStore(
           await tx
             .insert(outboundEnrollmentEvents)
             .values(events.map((event) => eventRow(organizationId, event)))
+          await tally(tx, organizationId, updated.campaignId, id, events)
         }
         return enrollmentOf(updated)
       }),
@@ -403,6 +491,30 @@ export function createPostgresEnrollmentStore(
           .orderBy(desc(t.occurredAt))
           .limit(1)
         return row?.at.toISOString() ?? null
+      }),
+
+    variantCounts: (organizationId, campaignId, version, stepKey) =>
+      inOrganization(organizationId, async (tx) => {
+        const t = outboundVariantStats
+        return tx
+          .select({
+            variantKey: t.variantKey,
+            sent: t.sent,
+            replied: t.replied,
+            bounced: t.bounced,
+            unsubscribed: t.unsubscribed,
+          })
+          .from(t)
+          .where(
+            and(
+              eq(t.organizationId, organizationId),
+              eq(t.campaignId, campaignId),
+              eq(t.version, version),
+              eq(t.stepKey, stepKey)
+            )
+          )
+          .orderBy(asc(t.variantKey))
+          .limit(MAX_VARIANTS)
       }),
   }
 }

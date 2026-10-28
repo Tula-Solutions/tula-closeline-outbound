@@ -4,6 +4,7 @@ import type {
   CampaignPage,
   CampaignPosition,
   CampaignStore,
+  Promotion,
 } from '~/ports/campaign-store'
 
 type Versions = Map<number, Sequence>
@@ -36,6 +37,9 @@ function matches(campaign: Campaign, filter: CampaignFilter): boolean {
  */
 export function createMemoryCampaignStore(): CampaignStore {
   const organizations = new Map<string, Map<string, Entry>>()
+  const promotions = new Map<string, Promotion>()
+  const promotionKey = (org: string, id: string, version: number, stepKey: string) =>
+    `${org}|${id}|${version}|${stepKey}`
   const entries = (organizationId: OrganizationId) => {
     let found = organizations.get(organizationId)
     if (found === undefined) {
@@ -126,6 +130,19 @@ export function createMemoryCampaignStore(): CampaignStore {
       found.versions.set(sequence.version, sequence)
       found.campaign = structuredClone(decision.campaign)
       return { campaign: structuredClone(found.campaign), sequence: structuredClone(sequence) }
+    },
+    async promotionOf(organizationId, id, version, stepKey) {
+      const found = promotions.get(promotionKey(organizationId, id, version, stepKey))
+      return found === undefined ? null : structuredClone(found)
+    },
+    async promote(organizationId, id, version, stepKey, promotion) {
+      const key = promotionKey(organizationId, id, version, stepKey)
+      const existing = promotions.get(key)
+      if (existing !== undefined) {
+        return { promotion: structuredClone(existing), created: false }
+      }
+      promotions.set(key, structuredClone(promotion))
+      return { promotion: structuredClone(promotion), created: true }
     },
   }
 }

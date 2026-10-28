@@ -36,6 +36,15 @@ export type Transition =
     }
   | { state: 'completed'; at: string }
 
+/** What happened to the sends of one variant: the raw counts behind a variant's results. */
+export type VariantCount = {
+  variantKey: string
+  sent: number
+  replied: number
+  bounced: number
+  unsubscribed: number
+}
+
 /** The store of Enrollments and their logs; every call is scoped to one Organization. */
 export type EnrollmentStore = {
   /**
@@ -129,4 +138,17 @@ export type EnrollmentStore = {
     id: EnrollmentId,
     kind: EnrollmentEvent['kind']
   ) => Promise<string | null>
+  /**
+   * Per variant of an email Step (of one Sequence version): the sends, and how many of those
+   * Prospects then replied, bounced or unsubscribed. The store keeps these as tallies updated with
+   * the events, so the read costs the number of variants, not the log. A stop is credited to the
+   * variant of the Prospect's latest send, which may be another Step's. Only variants with a send
+   * appear. The memory store keeps one tally per Campaign and ignores `version`.
+   */
+  variantCounts: (
+    organizationId: OrganizationId,
+    campaignId: CampaignId,
+    version: number,
+    stepKey: string
+  ) => Promise<VariantCount[]>
 }

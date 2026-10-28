@@ -1,4 +1,4 @@
-import { and, asc, eq } from 'drizzle-orm'
+import { and, asc, eq, sql } from 'drizzle-orm'
 import {
   DRAFT_CHECKS,
   type DraftId,
@@ -6,6 +6,7 @@ import {
   outreachDraftSchema,
 } from 'tula-closeline-contract'
 import {
+  MAX_REGENERATE_KEYS,
   outboundDraftChecks,
   outboundDraftCitations,
   outboundDrafts,
@@ -128,16 +129,19 @@ async function writeChildren(tx: Tx, organizationId: string, draft: OutreachDraf
 export function createPostgresDraftStore(inOrganization: InOrganization): DraftStore {
   const find = async (tx: Tx, organizationId: string, where: ReturnType<typeof and>) => {
     const [row] = await tx.select().from(outboundDrafts).where(where).limit(1)
-    return row === undefined ? null : load(tx, organizationId, row)
+    return row === undefined
+      ? null
+      : { draft: await load(tx, organizationId, row), variantKey: row.variantKey }
   }
   const byId = (organizationId: string, draftId: DraftId) =>
     and(eq(outboundDrafts.organizationId, organizationId), eq(outboundDrafts.id, draftId))
 
   return {
     get: (organizationId, draftId) =>
-      inOrganization(organizationId, (tx) =>
-        find(tx, organizationId, byId(organizationId, draftId))
-      ),
+      inOrganization(organizationId, async (tx) => {
+        const found = await find(tx, organizationId, byId(organizationId, draftId))
+        return found?.draft ?? null
+      }),
 
     byRequestKey: (organizationId, key) =>
       inOrganization(organizationId, (tx) =>
@@ -153,11 +157,11 @@ export function createPostgresDraftStore(inOrganization: InOrganization): DraftS
         find(
           tx,
           organizationId,
-          and(byId(organizationId, draftId), eq(outboundDrafts.regenerateKey, key))
-        )
+          and(byId(organizationId, draftId), sql`${key} = any(${outboundDrafts.regenerateKeys})`)
+        ).then((found) => found?.draft ?? null)
       ),
 
-    insert: (organizationId, draft, requestKey) =>
+    insert: (organizationId, draft, requestKey, variantKey) =>
       inOrganization(organizationId, async (tx) => {
         const [won] = await tx
           .insert(outboundDrafts)
@@ -166,6 +170,7 @@ export function createPostgresDraftStore(inOrganization: InOrganization): DraftS
             ...columnsOfDraft(organizationId, draft),
             createdAt: new Date(draft.createdAt),
             requestKey,
+            variantKey,
           })
           .onConflictDoNothing({
             target: [outboundDrafts.organizationId, outboundDrafts.requestKey],
@@ -183,12 +188,12 @@ export function createPostgresDraftStore(inOrganization: InOrganization): DraftS
           if (winner === null) {
             throw new Error('a Draft key conflict left no Draft to read')
           }
-          return winner.prospectId === draft.prospectId
-            ? { draft: winner, created: false }
+          return winner.draft.prospectId === draft.prospectId
+            ? { ...winner, created: false }
             : 'reused'
         }
         await writeChildren(tx, organizationId, draft)
-        return { draft, created: true }
+        return { draft, variantKey, created: true }
       }),
 
     revise: (organizationId, next, regenerateKey) =>
@@ -202,15 +207,22 @@ export function createPostgresDraftStore(inOrganization: InOrganization): DraftS
         if (row === undefined) {
           return 'missing' as const
         }
-        if (row.regenerateKey === regenerateKey) {
-          return { draft: await load(tx, organizationId, row), created: false }
+        if (row.regenerateKeys.includes(regenerateKey)) {
+          return {
+            draft: await load(tx, organizationId, row),
+            variantKey: row.variantKey,
+            created: false,
+          }
         }
         if (row.revision !== next.revision - 1) {
           return 'stale' as const
         }
         await tx
           .update(outboundDrafts)
-          .set({ ...columnsOfDraft(organizationId, next), regenerateKey })
+          .set({
+            ...columnsOfDraft(organizationId, next),
+            regenerateKeys: [...row.regenerateKeys, regenerateKey].slice(-MAX_REGENERATE_KEYS),
+          })
           .where(byId(organizationId, next.id))
         for (const table of [outboundDraftCitations, outboundDraftChecks]) {
           await tx
@@ -218,7 +230,7 @@ export function createPostgresDraftStore(inOrganization: InOrganization): DraftS
             .where(and(eq(table.organizationId, organizationId), eq(table.draftId, next.id)))
         }
         await writeChildren(tx, organizationId, next)
-        return { draft: next, created: true }
+        return { draft: next, variantKey: row.variantKey, created: true }
       }),
   }
 }

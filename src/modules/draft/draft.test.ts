@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test'
-import { type CallId, type DealRecordId, formatId, type ProspectId } from 'tula-closeline-contract'
+import {
+  type CallId,
+  type DealRecordId,
+  formatId,
+  MAX_DRAFT_CITATIONS,
+  type ProspectId,
+} from 'tula-closeline-contract'
 import { ModelBudgetExceededError } from '~/ports/model'
 import { createTestApp, newOrganizationId, newUserId, type TestIdentity } from '~/testing'
 import { runChecks } from './checks'
@@ -244,10 +250,23 @@ describe('grounded Draft', () => {
     expect(codeOf(bad.body)).toBe('draft.model_unavailable')
   })
 
-  test('without a Brand Voice it is voice.not_found', async () => {
+  test('without a Brand Voice the HTTP route is voice.not_found', async () => {
     const w = await world(false)
     const reply = await w.draft(w.admin, { prospectId: w.seed(w.admin) })
     expect(codeOf(reply.body)).toBe('voice.not_found')
+  })
+
+  test('the engine step without a Brand Voice writes with a neutral default voice', async () => {
+    const w = await world(false)
+    const prospect = w.seed(w.admin)
+    const campaignId = formatId('cpg', crypto.randomUUID())
+    const step = { prospectId: prospect, campaignId, stepKey: 'step-1', goal: 'Book a call' }
+    const first = await Drafts.obtainForStep(w.t.deps.drafts, w.admin.organizationId, step)
+    expect(first.voiceVersion).toBe(1)
+    const again = await Drafts.obtainForStep(w.t.deps.drafts, w.admin.organizationId, step)
+    expect(again.id).toBe(first.id)
+    const voice = await w.call('GET', '/v1/brand-voice', w.admin)
+    expect(voice.body).toMatchObject({ id: first.brandVoiceId, version: 1 })
   })
 
   test('a Prospect or Draft of another Organization is a 404', async () => {
@@ -270,6 +289,88 @@ describe('grounded Draft', () => {
     const second = await Drafts.obtainForStep(w.t.deps.drafts, w.admin.organizationId, request)
     expect(second.id).toBe(first.id)
     expect(first.goal).toBe('Book a call')
+  })
+
+  test('the Step keeps the variant it was written for, whatever a later run asks', async () => {
+    const w = await world()
+    const prospect = w.seed(w.admin)
+    const campaignId = formatId('cpg', crypto.randomUUID())
+    const step = { prospectId: prospect, campaignId, stepKey: 'step-1', goal: 'Book a call' }
+    const first = await Drafts.obtainForStep(w.t.deps.drafts, w.admin.organizationId, {
+      ...step,
+      variant: { key: 'cost-angle', angle: 'Lead with cost' },
+    })
+    expect(first.variantKey).toBe('cost-angle')
+    const promoted = await Drafts.obtainForStep(w.t.deps.drafts, w.admin.organizationId, {
+      ...step,
+      variant: { key: 'speed-angle', angle: 'Lead with speed' },
+    })
+    expect(promoted).toMatchObject({ id: first.id, variantKey: 'cost-angle' })
+    const plain = await Drafts.obtainForStep(w.t.deps.drafts, w.admin.organizationId, {
+      ...step,
+      stepKey: 'step-2',
+    })
+    expect(plain.variantKey).toBeNull()
+  })
+
+  test('a retry of an older regenerate key replays instead of regenerating', async () => {
+    const w = await world()
+    const first = await w.draft(w.admin, { prospectId: w.seed(w.admin) })
+    const path = `/v1/outreach-drafts/${first.body.id}/regenerate`
+    const regen = (key: string) => w.call('POST', path, w.admin, {}, key)
+    expect((await regen('regen-aaaaaaaaaaaaaaaa')).body.revision).toBe(2)
+    expect((await regen('regen-bbbbbbbbbbbbbbbb')).body.revision).toBe(3)
+    expect((await regen('regen-aaaaaaaaaaaaaaaa')).body.revision).toBe(3)
+    const read = await w.call('GET', `/v1/outreach-drafts/${first.body.id}`, w.admin)
+    expect(read.body.revision).toBe(3)
+  })
+
+  test('more claims than the Citation cap count as unresolved', async () => {
+    const w = await world()
+    const prospect = w.seed(w.admin)
+    w.t.deps.researchPlaybook.seed(
+      w.admin.organizationId,
+      Array.from({ length: 10 }, (_, i) => ({
+        kind: 'moment' as const,
+        callId: newCall(),
+        dealRecordId: newDeal(),
+        text: `Win number ${i}`,
+        score: 0.9,
+      }))
+    )
+    w.t.deps.researchWeb.setPages(
+      Array.from({ length: 10 }, (_, i) => ({
+        url: `https://example.com/${i}`,
+        title: `Page ${i}`,
+        snippet: `Fact ${i}`,
+        retrievedAt: new Date().toISOString(),
+      }))
+    )
+    // 1 Prospect field + 10 pages + 10 Moments are 21 distinct sources, one over the cap of 20.
+    await w.model(w.admin, prospect, citing())
+    const reply = await w.draft(w.admin, { prospectId: prospect })
+    expect(reply.body.citations).toHaveLength(MAX_DRAFT_CITATIONS)
+    const check = reply.body.checks.find((c: Any) => c.check === 'citations_resolve')
+    expect(check).toMatchObject({ result: 'fail', count: 1 })
+    expect(reply.body.autoSendable).toBe(false)
+  })
+
+  test('a Playbook outage is logged with ids only and the Draft is ungrounded', async () => {
+    const w = await world()
+    const prospect = w.seed(w.admin)
+    w.moment(w.admin, 'SECRET-WIN-TEXT')
+    w.t.deps.drafts.research.playbook = {
+      search: async () => {
+        throw new Error('SECRET-WIN-TEXT upstream down')
+      },
+    }
+    const reply = await w.draft(w.admin, { prospectId: prospect })
+    expect(reply.status).toBe(201)
+    expect(reply.body.ungrounded).toBe(true)
+    const logged = w.t.deps.logLines.filter((l) => l.includes('draft.playbook_unavailable'))
+    expect(logged).toHaveLength(1)
+    expect(logged[0]).toContain(w.admin.organizationId)
+    expect(logged[0]).not.toContain('SECRET-WIN-TEXT')
   })
 })
 

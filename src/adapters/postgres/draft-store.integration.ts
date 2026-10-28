@@ -104,9 +104,13 @@ describe.each(stores)('draft store (%s)', (_name, store, voices) => {
     const { voice, prospect } = await setup(voices, org)
     const made = draft(prospect, voice)
     const k = key()
-    expect(await store.insert(org, made, k)).toEqual({ draft: made, created: true })
+    expect(await store.insert(org, made, k, 'cost-angle')).toEqual({
+      draft: made,
+      variantKey: 'cost-angle',
+      created: true,
+    })
     expect(await store.get(org, made.id)).toEqual(made)
-    expect(await store.byRequestKey(org, k)).toEqual(made)
+    expect(await store.byRequestKey(org, k)).toEqual({ draft: made, variantKey: 'cost-angle' })
     expect(await store.byRequestKey(org, key())).toBeNull()
   })
 
@@ -117,19 +121,19 @@ describe.each(stores)('draft store (%s)', (_name, store, voices) => {
     const first = draft(prospect, voice)
     const second = draft(prospect, voice)
     const [a, b] = (
-      await Promise.all([store.insert(org, first, k), store.insert(org, second, k)])
+      await Promise.all([store.insert(org, first, k, null), store.insert(org, second, k, null)])
     ).map(kept) as [DraftOutcome, DraftOutcome]
     expect(a.draft.id).toBe(b.draft.id)
     expect([a.created, b.created].sort()).toEqual([false, true])
     expect(await store.get(org, a.draft.id === first.id ? second.id : first.id)).toBeNull()
-    expect(await store.insert(org, draft(formatId('prs', hex()), voice), k)).toBe('reused')
+    expect(await store.insert(org, draft(formatId('prs', hex()), voice), k, null)).toBe('reused')
   })
 
   test('a revision replaces the text, Citations and checks once per key', async () => {
     const org = newOrganizationId()
     const { voice, prospect } = await setup(voices, org)
     const first = draft(prospect, voice)
-    await store.insert(org, first, key())
+    await store.insert(org, first, key(), null)
     const next: OutreachDraft = {
       ...draft(prospect, voice, 2),
       id: first.id,
@@ -142,13 +146,32 @@ describe.each(stores)('draft store (%s)', (_name, store, voices) => {
       source: 'generated',
     }
     const k = key()
-    expect(kept(await store.revise(org, next, k))).toEqual({ draft: next, created: true })
+    expect(kept(await store.revise(org, next, k))).toEqual({
+      draft: next,
+      variantKey: null,
+      created: true,
+    })
     expect(await store.get(org, first.id)).toEqual(next)
     expect(await store.regeneratedBy(org, first.id, k)).toEqual(next)
     expect(await store.regeneratedBy(org, first.id, key())).toBeNull()
     expect(kept(await store.revise(org, next, k)).created).toBe(false)
     expect(await store.revise(org, { ...next, revision: 5 }, key())).toBe('stale')
     expect(await store.revise(org, { ...next, id: formatId('drf', hex()) }, key())).toBe('missing')
+  })
+
+  test('a retry of an older regeneration key still finds its revision', async () => {
+    const org = newOrganizationId()
+    const { voice, prospect } = await setup(voices, org)
+    const first = draft(prospect, voice)
+    await store.insert(org, first, key(), null)
+    const [k1, k2] = [key(), key()]
+    const second = { ...draft(prospect, voice, 2), id: first.id, createdAt: first.createdAt }
+    const third = { ...draft(prospect, voice, 3), id: first.id, createdAt: first.createdAt }
+    kept(await store.revise(org, second, k1))
+    kept(await store.revise(org, third, k2))
+    expect(await store.regeneratedBy(org, first.id, k1)).toEqual(third)
+    expect(kept(await store.revise(org, third, k1)).created).toBe(false)
+    expect((await store.get(org, first.id))?.revision).toBe(3)
   })
 
   test('a Draft and its key belong to their Organization', async () => {
@@ -158,9 +181,11 @@ describe.each(stores)('draft store (%s)', (_name, store, voices) => {
     const otherSetup = await setup(voices, other)
     const made = draft(prospect, voice)
     const k = key()
-    await store.insert(org, made, k)
+    await store.insert(org, made, k, null)
     expect(await store.get(other, made.id)).toBeNull()
     expect(await store.byRequestKey(other, k)).toBeNull()
-    expect(kept(await store.insert(other, draft(prospect, otherSetup.voice), k)).created).toBe(true)
+    expect(
+      kept(await store.insert(other, draft(prospect, otherSetup.voice), k, null)).created
+    ).toBe(true)
   })
 })
