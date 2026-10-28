@@ -13,6 +13,8 @@ export type MailTransportHarness = {
   failProvider(times: number): void
   /** Messages the provider accepted, oldest first. */
   accepted(): readonly OutgoingMessage[]
+  /** False for a provider with no per-grant revoke (Microsoft): the revoke test is skipped. Default true. */
+  revokeEndsGrant?: boolean
 }
 
 const VERIFIER = 'a'.repeat(64)
@@ -107,6 +109,12 @@ export function describeMailTransport(label: string, make: () => MailTransportHa
 
     test('revoke ends the grant, and revoking twice is fine', async () => {
       const harness = make()
+      if (harness.revokeEndsGrant === false) {
+        // No per-grant revoke exists: calling it twice must still be harmless.
+        await harness.transport.revoke('any-token')
+        await harness.transport.revoke('any-token')
+        return
+      }
       const { tokens } = await harness.transport.exchangeCode({
         code: harness.consent(ACCOUNT),
         codeVerifier: VERIFIER,

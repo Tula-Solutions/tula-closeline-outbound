@@ -20,6 +20,7 @@ import { type Consumer, createSqsQueue } from 'tula-closeline-kit/queue'
 import { createMemoryQueue } from 'tula-closeline-kit/testing'
 import { createLocalKeySecretBox, createUnconfiguredSecretBox } from '~/adapters/crypto/secret-box'
 import { createGmailMailTransport } from '~/adapters/gmail/mail-transport'
+import { createGraphMailTransport } from '~/adapters/graph/mail-transport'
 import { createHttpCoreProspects } from '~/adapters/http/core'
 import { createMemoryCore } from '~/adapters/memory/core'
 import { createMemoryMailTransport } from '~/adapters/memory/mail-transport'
@@ -250,6 +251,26 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
             ? createMemoryMailTransport({
                 clock: systemClock,
                 redirectUri: env.MAIL_OAUTH_REDIRECT_URI,
+              })
+            : undefined,
+      outlook:
+        env.MICROSOFT_CLIENT_ID !== undefined && env.MICROSOFT_CLIENT_SECRET !== undefined
+          ? createGraphMailTransport({
+              clientId: env.MICROSOFT_CLIENT_ID,
+              clientSecret: env.MICROSOFT_CLIENT_SECRET,
+              redirectUri: env.MAIL_OAUTH_REDIRECT_URI,
+              authUrl: env.MICROSOFT_AUTH_URL,
+              tokenUrl: env.MICROSOFT_TOKEN_URL,
+              apiBaseUrl: env.GRAPH_API_BASE_URL,
+              timeoutMs: env.MAIL_CALL_TIMEOUT_MS,
+              maxTries: env.MAIL_CALL_MAX_TRIES,
+              retryBaseMs: env.MAIL_RETRY_BASE_MS,
+            })
+          : env.ENVIRONMENT === 'local'
+            ? createMemoryMailTransport({
+                clock: systemClock,
+                redirectUri: env.MAIL_OAUTH_REDIRECT_URI,
+                provider: 'outlook',
               })
             : undefined,
     },

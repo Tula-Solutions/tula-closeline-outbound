@@ -30,6 +30,9 @@ test('configuration falls back to defaults for everything but the environment', 
     GOOGLE_TOKEN_URL: 'https://oauth2.googleapis.com/token',
     GOOGLE_REVOKE_URL: 'https://oauth2.googleapis.com/revoke',
     GMAIL_API_BASE_URL: 'https://gmail.googleapis.com',
+    MICROSOFT_AUTH_URL: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
+    MICROSOFT_TOKEN_URL: 'https://login.microsoftonline.com/common/oauth2/v2.0/token',
+    GRAPH_API_BASE_URL: 'https://graph.microsoft.com',
     MAIL_OAUTH_REDIRECT_URI: 'http://127.0.0.1:3000/mailboxes/connect/callback',
     MAIL_STATE_SECRET: 'local-only-mail-state-secret-do-not-use',
     MAIL_CALL_TIMEOUT_MS: 10_000,
@@ -42,6 +45,15 @@ test('a Google client id needs its secret', () => {
   expect(() => loadEnv({ ENVIRONMENT: 'local', GOOGLE_CLIENT_ID: 'id' })).toThrow(
     /GOOGLE_CLIENT_SECRET.*is required/s
   )
+})
+
+test('a Microsoft client id needs its secret, and its endpoints are https outside local', () => {
+  expect(() => loadEnv({ ENVIRONMENT: 'local', MICROSOFT_CLIENT_ID: 'id' })).toThrow(
+    /MICROSOFT_CLIENT_SECRET.*is required/s
+  )
+  expect(() =>
+    loadEnv({ ENVIRONMENT: 'dev', GRAPH_API_BASE_URL: 'http://127.0.0.1:3200' })
+  ).toThrow(/GRAPH_API_BASE_URL must be https/)
 })
 
 test('the local AES key is refused in staging and prod', () => {

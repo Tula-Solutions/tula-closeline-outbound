@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import type { MailboxProvider } from 'tula-closeline-contract'
 import type { Clock } from 'tula-closeline-kit'
 import {
   type ConnectedAccount,
@@ -30,6 +31,8 @@ export type MemoryMailTransportOptions = {
   clock: Clock
   /** Where the authorization URL sends the person back to; the memory provider consents at once. */
   redirectUri?: string
+  /** Which provider this stands in for; defaults to Gmail. */
+  provider?: MailboxProvider
 }
 
 type Grant = { account: ConnectedAccount; revoked: boolean }
@@ -77,7 +80,7 @@ export function createMemoryMailTransport(
   }
 
   return {
-    provider: 'gmail',
+    provider: options.provider ?? 'gmail',
     consent: (account) => consent(account),
     revokeGrant(refreshToken) {
       const grant = grants.get(refreshToken)

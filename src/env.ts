@@ -67,6 +67,11 @@ const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const GOOGLE_REVOKE_URL = 'https://oauth2.googleapis.com/revoke'
 const GMAIL_API_BASE_URL = 'https://gmail.googleapis.com'
 
+/** Microsoft's own endpoints (tenant `common`: work, school and personal accounts). */
+const MICROSOFT_AUTH_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize'
+const MICROSOFT_TOKEN_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/token'
+const GRAPH_API_BASE_URL = 'https://graph.microsoft.com'
+
 /** Where the portal receives the provider's redirect in a local run. */
 const LOCAL_MAIL_REDIRECT_URI = 'http://127.0.0.1:3000/mailboxes/connect/callback'
 
@@ -82,6 +87,9 @@ const MAIL_ENDPOINT_KEYS = [
   'GOOGLE_TOKEN_URL',
   'GOOGLE_REVOKE_URL',
   'GMAIL_API_BASE_URL',
+  'MICROSOFT_AUTH_URL',
+  'MICROSOFT_TOKEN_URL',
+  'GRAPH_API_BASE_URL',
   'MAIL_OAUTH_REDIRECT_URI',
 ] as const
 
@@ -172,6 +180,16 @@ const schema = z
     GOOGLE_REVOKE_URL: z.url().max(2_048).default(GOOGLE_REVOKE_URL),
     /** The Gmail API's origin. */
     GMAIL_API_BASE_URL: z.url().max(2_048).default(GMAIL_API_BASE_URL),
+    /** The Microsoft (Entra) app for Outlook Mailboxes. Unset in `local` means the in-memory provider. */
+    MICROSOFT_CLIENT_ID: z.string().min(1).max(512).optional(),
+    /** The Microsoft app's client secret; required with `MICROSOFT_CLIENT_ID`. Never log it. */
+    MICROSOFT_CLIENT_SECRET: z.string().min(1).max(512).optional(),
+    /** Microsoft's consent page; a local run may point it at a fake. */
+    MICROSOFT_AUTH_URL: z.url().max(2_048).default(MICROSOFT_AUTH_URL),
+    /** Microsoft's token endpoint. */
+    MICROSOFT_TOKEN_URL: z.url().max(2_048).default(MICROSOFT_TOKEN_URL),
+    /** The Microsoft Graph origin. */
+    GRAPH_API_BASE_URL: z.url().max(2_048).default(GRAPH_API_BASE_URL),
     /** Where the provider sends the person back to; the portal receives it and completes the connection. */
     MAIL_OAUTH_REDIRECT_URI: z.url().max(2_048).optional(),
     /** The secret that signs connect attempts (at least 32 characters). Required outside `local`. Never log it. */
@@ -246,6 +264,22 @@ const schema = z
           code: 'custom',
           path: ['MAIL_OAUTH_REDIRECT_URI'],
           message: 'MAIL_OAUTH_REDIRECT_URI is required when GOOGLE_CLIENT_ID is set',
+        })
+      }
+    }
+    if (env.MICROSOFT_CLIENT_ID !== undefined) {
+      if (env.MICROSOFT_CLIENT_SECRET === undefined) {
+        context.addIssue({
+          code: 'custom',
+          path: ['MICROSOFT_CLIENT_SECRET'],
+          message: 'MICROSOFT_CLIENT_SECRET is required when MICROSOFT_CLIENT_ID is set',
+        })
+      }
+      if (env.MAIL_OAUTH_REDIRECT_URI === undefined && env.ENVIRONMENT !== 'local') {
+        context.addIssue({
+          code: 'custom',
+          path: ['MAIL_OAUTH_REDIRECT_URI'],
+          message: 'MAIL_OAUTH_REDIRECT_URI is required when MICROSOFT_CLIENT_ID is set',
         })
       }
     }

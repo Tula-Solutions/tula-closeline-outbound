@@ -320,6 +320,51 @@ describe('sending through a Mailbox', () => {
   })
 })
 
+describe('Outlook through the same module', () => {
+  test('connects, sends through the Outlook transport, and disconnects', async () => {
+    const w = await world()
+    const mailbox = await w.connect(w.rep, { provider: 'outlook' })
+    expect(mailbox).toMatchObject({ provider: 'outlook', state: 'warming' })
+    const Mailboxes = await import('./service')
+    const sent = await Mailboxes.sendThrough(
+      w.t.deps.mailboxes,
+      w.org,
+      mailbox.id as never,
+      {
+        to: 'buyer@example.com',
+        from: { address: mailbox.address as string, name: 'Rep' },
+        subject: 'Hello',
+        text: 'Hi there',
+        messageId: '<m2@example.com>',
+      } as never
+    )
+    expect(sent.providerMessageId).toBeTruthy()
+    expect(w.t.deps.outlookMail.accepted()).toHaveLength(1)
+    expect(w.t.deps.mail.accepted()).toHaveLength(0)
+    const gone = await w.call('DELETE', `/v1/mailboxes/${mailbox.id}`, w.rep)
+    expect(gone.body).toMatchObject({ state: 'disconnected' })
+    expect(w.t.deps.outlookMail.revokedByUs()).toHaveLength(1)
+  })
+
+  test('a revoked Outlook grant disconnects the Mailbox with auth_revoked', async () => {
+    const w = await world()
+    const mailbox = await w.connect(w.rep, { provider: 'outlook' })
+    await w.t.deps.time.advance(2 * 60 * 60 * 1000)
+    const Mailboxes = await import('./service')
+    const tokens = await w.t.deps.mailboxes.store.readTokens(w.org, mailbox.id as never)
+    const refresh = await w.t.deps.mailboxes.secretBox.open(
+      { keyId: tokens?.keyId as string, ciphertext: tokens?.refreshToken as Uint8Array },
+      { organizationId: w.org, mailboxId: mailbox.id as never, purpose: 'refresh_token' }
+    )
+    w.t.deps.outlookMail.revokeGrant(refresh)
+    await expect(
+      Mailboxes.accessTokenFor(w.t.deps.mailboxes, w.org, mailbox.id as never)
+    ).rejects.toMatchObject({ code: 'mailbox.auth_revoked' })
+    const read = await w.call('GET', `/v1/mailboxes/${mailbox.id}`, w.rep)
+    expect(read.body).toMatchObject({ state: 'disconnected', stateReason: 'auth_revoked' })
+  })
+})
+
 describe('a connect link is used once', () => {
   test('a link whose completion already ran is burned, even if that run failed', async () => {
     const w = await world()
