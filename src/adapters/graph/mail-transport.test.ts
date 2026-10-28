@@ -37,6 +37,7 @@ function fakeMicrosoft() {
   const access = new Map<string, { email: string; name: string }>()
   const drafts = new Map<string, OutgoingMessage>()
   let failures = 0
+  let rotate = false
   const calls: string[] = []
   const identityOf = new Map<string, { email: string; name: string }>()
 
@@ -78,7 +79,14 @@ function fakeMicrosoft() {
       }
       const accessToken = `eyJ0.access-${randomUUID()}`
       access.set(accessToken, who)
-      return Response.json({ access_token: accessToken, expires_in: 3599 })
+      if (!rotate) {
+        return Response.json({ access_token: accessToken, expires_in: 3599 })
+      }
+      const next = `0.AAA-rotated-${randomUUID()}`
+      refreshTokens.set(refresh, false)
+      refreshTokens.set(next, true)
+      identityOf.set(next, who)
+      return Response.json({ access_token: accessToken, refresh_token: next, expires_in: 3599 })
     }
     const headers = init.headers as Record<string, string>
     const who = access.get((headers.authorization ?? '').replace('Bearer ', ''))
@@ -136,6 +144,9 @@ function fakeMicrosoft() {
     failProvider: (times: number) => {
       failures = times
     },
+    rotateOnRefresh: () => {
+      rotate = true
+    },
   }
 }
 
@@ -185,6 +196,20 @@ describe('graph adapter', () => {
       displayName: 'Riley',
       providerAccountId: 'oid-1',
     })
+  })
+
+  test('a refresh that rotates the refresh token hands the new one back, and the old one dies', async () => {
+    const ms = fakeMicrosoft()
+    const transport = make(ms)
+    const { tokens } = await transport.exchangeCode({
+      code: ms.consent({ address: 'a@b.test', displayName: 'A' }),
+      codeVerifier: 'a'.repeat(64),
+    })
+    expect((await transport.refresh(tokens.refreshToken)).refreshToken).toBeUndefined()
+    ms.rotateOnRefresh()
+    const rotated = await transport.refresh(tokens.refreshToken)
+    expect(rotated.refreshToken).toMatch(/^0\.AAA-rotated-/)
+    expect(await transport.refresh(rotated.refreshToken as string)).toHaveProperty('accessToken')
   })
 
   test('a 503 is retried with jittered backoff, then succeeds', async () => {
@@ -263,6 +288,53 @@ describe('graph adapter', () => {
       await transport.send('tok', MESSAGE).catch(() => {})
       expect(sends).toBe(expected)
     }
+  })
+
+  test('a 404 on the send step after a 429 may mean the first try went through: unknown outcome', async () => {
+    let sends = 0
+    const transport = createGraphMailTransport({
+      ...BASE,
+      fetch: async (input) => {
+        if (!input.endsWith('/send')) {
+          return Response.json({ id: 'D1', conversationId: 'C1' }, { status: 201 })
+        }
+        sends += 1
+        return new Response('{}', { status: sends === 1 ? 429 : 404 })
+      },
+      sleep: async () => {},
+    })
+    const error = await transport.send('tok', MESSAGE).catch((e: unknown) => e)
+    expect((error as MailTransportError).failure).toBe('timeout')
+    expect(sends).toBe(2)
+  })
+
+  test('a definite refusal on the send step deletes the draft; an unknown outcome keeps it', async () => {
+    const run = async (sendStatus: number | 'timeout') => {
+      const deleted: string[] = []
+      const transport = createGraphMailTransport({
+        ...BASE,
+        fetch: async (input, init) => {
+          if (init.method === 'DELETE') {
+            deleted.push(new URL(input).pathname)
+            return new Response('boom', { status: 500 })
+          }
+          if (!input.endsWith('/send')) {
+            return Response.json({ id: 'D1', conversationId: 'C1' }, { status: 201 })
+          }
+          if (sendStatus === 'timeout') {
+            throw new DOMException('timed out', 'TimeoutError')
+          }
+          return new Response('{}', { status: sendStatus })
+        },
+        sleep: async () => {},
+      })
+      const error = await transport.send('tok', MESSAGE).catch((e: unknown) => e)
+      return { deleted, failure: (error as MailTransportError).failure }
+    }
+    expect(await run(400)).toEqual({ deleted: ['/v1.0/me/messages/D1'], failure: 'rejected' })
+    expect(await run(401)).toEqual({ deleted: ['/v1.0/me/messages/D1'], failure: 'token_expired' })
+    expect((await run('timeout')).deleted).toEqual([])
+    expect((await run(500)).deleted).toEqual([])
   })
 
   test('creating the draft is retried on a 5xx', async () => {

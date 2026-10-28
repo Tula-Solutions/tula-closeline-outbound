@@ -346,6 +346,19 @@ describe('Outlook through the same module', () => {
     expect(w.t.deps.outlookMail.revokedByUs()).toHaveLength(1)
   })
 
+  test('a rotated refresh token is stored, so the next refresh still works', async () => {
+    const w = await world()
+    const mailbox = await w.connect(w.rep, { provider: 'outlook' })
+    w.t.deps.outlookMail.rotateRefreshTokens(true)
+    const Mailboxes = await import('./service')
+    for (let round = 0; round < 3; round += 1) {
+      await w.t.deps.time.advance(2 * 60 * 60 * 1000)
+      await Mailboxes.accessTokenFor(w.t.deps.mailboxes, w.org, mailbox.id as never)
+    }
+    const read = await w.call('GET', `/v1/mailboxes/${mailbox.id}`, w.rep)
+    expect(read.body).toMatchObject({ state: 'warming' })
+  })
+
   test('a revoked Outlook grant disconnects the Mailbox with auth_revoked', async () => {
     const w = await world()
     const mailbox = await w.connect(w.rep, { provider: 'outlook' })

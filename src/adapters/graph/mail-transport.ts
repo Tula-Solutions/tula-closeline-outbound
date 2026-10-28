@@ -180,7 +180,12 @@ export function createGraphMailTransport(options: GraphMailTransportOptions): Ma
       if (status !== 200 || accessToken === undefined) {
         throw new MailTransportError('rejected', status)
       }
-      return { accessToken, expiresAt: expiry(body) }
+      const rotated = field(body, 'refresh_token')
+      return {
+        accessToken,
+        expiresAt: expiry(body),
+        ...(rotated === undefined ? {} : { refreshToken: rotated }),
+      }
     },
 
     // shortcut: Microsoft offers no revoke for one app's grant (revokeSignInSessions would sign the
@@ -207,17 +212,31 @@ export function createGraphMailTransport(options: GraphMailTransportOptions): Ma
       if (draft.status !== 201 || id === undefined) {
         throw new MailTransportError('rejected', draft.status)
       }
+      let retried = false
       const sent = await call(
         `${api}/me/messages/${encodeURIComponent(id)}/send`,
         { method: 'POST', headers: bearer(accessToken) },
-        (outcome) =>
-          typeof outcome !== 'string' && (outcome.status === 429 || outcome.status === 503)
+        (outcome) => {
+          retried =
+            typeof outcome !== 'string' && (outcome.status === 429 || outcome.status === 503)
+          return retried
+        }
       )
-      if (sent.status === 401) {
-        throw new MailTransportError('token_expired', sent.status)
+      if (sent.status === 404 && retried) {
+        // The draft is gone: an earlier try that looked refused probably sent it. Unknown outcome.
+        throw new MailTransportError('timeout', sent.status)
       }
       if (sent.status !== 202) {
-        throw new MailTransportError('rejected', sent.status)
+        // Definite refusal: the draft would sit in the person's Drafts folder, so remove it.
+        await call(
+          `${api}/me/messages/${encodeURIComponent(id)}`,
+          { method: 'DELETE', headers: bearer(accessToken) },
+          () => false
+        ).catch(() => undefined) // shortcut: a failed cleanup is dropped unlogged; add a logger option if orphans matter.
+        throw new MailTransportError(
+          sent.status === 401 ? 'token_expired' : 'rejected',
+          sent.status
+        )
       }
       return { providerMessageId: id, threadId: field(draft.body, 'conversationId') ?? id }
     },

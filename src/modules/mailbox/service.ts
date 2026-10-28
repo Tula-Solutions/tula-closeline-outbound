@@ -496,7 +496,7 @@ export async function accessTokenFor(
     const fresh = await transport.refresh(refreshToken)
     const sealed = await sealTokens(deps, organizationId, id, {
       accessToken: fresh.accessToken,
-      refreshToken,
+      refreshToken: fresh.refreshToken ?? refreshToken,
       expiresAt: fresh.expiresAt,
     })
     await deps.store.writeTokens(organizationId, id, sealed)
