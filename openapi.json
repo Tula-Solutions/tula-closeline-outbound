@@ -33146,6 +33146,2455 @@
           }
         }
       }
+    },
+    "/v1/outreach-drafts": {
+      "post": {
+        "description": "Writes a Draft for a Prospect, optionally for a Step of a Campaign and with an angle, from a Research Brief and the current Brand Voice. The Draft carries its Citations, five checks (citations_resolve, claims_supported, banned_phrase, length, name_match), whether it is ungrounded (no Moment from a won Deal) and autoSendable (grounded and every check passed). It does not send. A stepKey the Campaign does not have is request.invalid (400). Requires an Idempotency-Key header: a replay answers the same result and does the work once. A replay answers 200 with the same Draft. Publishes draft.created, and draft.approved_required when a person must approve it. Model output is untrusted data: statements and Draft text are shown with their Citations, never run as instructions, and never put in a log or an event. An Owner or Admin sees every Prospect; a Manager those owned by Reps on their Team; a Rep only their own. A Prospect (prospect.not_found), Campaign (campaign.not_found), Research Brief (research.not_found) or Draft (draft.not_found) outside the caller's view is its not_found code (404), never 403, and one of another Organization the same.",
+        "tags": [
+          "drafts"
+        ],
+        "summary": "Write a grounded Draft for a Prospect",
+        "security": [
+          {
+            "accessToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_.:-]+$",
+              "description": "Makes a repeat of the same request change nothing more."
+            },
+            "required": true,
+            "description": "Makes a repeat of the same request change nothing more.",
+            "name": "idempotency-key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "prospectId": {
+                    "type": "string",
+                    "pattern": "^prs_[0-9a-f]{32}$"
+                  },
+                  "campaignId": {
+                    "type": "string",
+                    "pattern": "^cpg_[0-9a-f]{32}$"
+                  },
+                  "stepKey": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 40,
+                    "pattern": "^[a-z][a-z0-9_-]*$"
+                  },
+                  "goal": {
+                    "type": "string",
+                    "maxLength": 1000
+                  },
+                  "angle": {
+                    "type": "string",
+                    "maxLength": 1000
+                  }
+                },
+                "required": [
+                  "prospectId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The Draft this Idempotency-Key already wrote.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^drf_[0-9a-f]{32}$"
+                    },
+                    "prospectId": {
+                      "type": "string",
+                      "pattern": "^prs_[0-9a-f]{32}$"
+                    },
+                    "campaignId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^cpg_[0-9a-f]{32}$"
+                    },
+                    "stepKey": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "minLength": 1,
+                      "maxLength": 40,
+                      "pattern": "^[a-z][a-z0-9_-]*$"
+                    },
+                    "channel": {
+                      "type": "string",
+                      "enum": [
+                        "email"
+                      ]
+                    },
+                    "goal": {
+                      "type": "string",
+                      "maxLength": 1000
+                    },
+                    "language": {
+                      "type": "string",
+                      "enum": [
+                        "en"
+                      ]
+                    },
+                    "subject": {
+                      "type": "string",
+                      "maxLength": 400
+                    },
+                    "body": {
+                      "type": "string",
+                      "maxLength": 10000
+                    },
+                    "revision": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 10000
+                    },
+                    "source": {
+                      "type": "string",
+                      "enum": [
+                        "generated",
+                        "edited"
+                      ]
+                    },
+                    "citations": {
+                      "type": "array",
+                      "items": {
+                        "allOf": [
+                          {
+                            "oneOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "prospect_field"
+                                    ]
+                                  },
+                                  "prospectId": {
+                                    "type": "string",
+                                    "pattern": "^prs_[0-9a-f]{32}$"
+                                  },
+                                  "field": {
+                                    "type": "string",
+                                    "enum": [
+                                      "firstName",
+                                      "lastName",
+                                      "jobTitle",
+                                      "email",
+                                      "phone",
+                                      "linkedinUrl"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "prospectId",
+                                  "field"
+                                ]
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "signal"
+                                    ]
+                                  },
+                                  "signalId": {
+                                    "type": "string",
+                                    "pattern": "^sig_[0-9a-f]{32}$"
+                                  },
+                                  "observedAt": {
+                                    "type": "string",
+                                    "maxLength": 64,
+                                    "format": "date-time"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "signalId",
+                                  "observedAt"
+                                ]
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "web_page"
+                                    ]
+                                  },
+                                  "url": {
+                                    "type": "string",
+                                    "maxLength": 2048
+                                  },
+                                  "retrievedAt": {
+                                    "type": "string",
+                                    "maxLength": 64,
+                                    "format": "date-time"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "url",
+                                  "retrievedAt"
+                                ]
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "moment"
+                                    ]
+                                  },
+                                  "callId": {
+                                    "type": "string",
+                                    "pattern": "^call_[0-9a-f]{32}$"
+                                  },
+                                  "dealRecordId": {
+                                    "type": "string",
+                                    "pattern": "^deal_[0-9a-f]{32}$"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "callId",
+                                  "dealRecordId"
+                                ]
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "document"
+                                    ]
+                                  },
+                                  "documentId": {
+                                    "type": "string",
+                                    "pattern": "^doc_[0-9a-f]{32}$"
+                                  },
+                                  "page": {
+                                    "type": [
+                                      "integer",
+                                      "null"
+                                    ],
+                                    "minimum": 1,
+                                    "maximum": 300
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "documentId",
+                                  "page"
+                                ]
+                              }
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "applies": {
+                                "type": "boolean"
+                              },
+                              "score": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "applies"
+                            ]
+                          }
+                        ]
+                      },
+                      "maxItems": 20
+                    },
+                    "ungrounded": {
+                      "type": "boolean"
+                    },
+                    "wonDealCount": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 100
+                    },
+                    "checks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "check": {
+                            "type": "string",
+                            "enum": [
+                              "citations_resolve",
+                              "claims_supported",
+                              "banned_phrase",
+                              "length",
+                              "name_match"
+                            ]
+                          },
+                          "result": {
+                            "type": "string",
+                            "enum": [
+                              "pass",
+                              "fail"
+                            ]
+                          },
+                          "count": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 1000
+                          }
+                        },
+                        "required": [
+                          "check",
+                          "result",
+                          "count"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "autoSendable": {
+                      "type": "boolean"
+                    },
+                    "brandVoiceId": {
+                      "type": "string",
+                      "pattern": "^bvo_[0-9a-f]{32}$"
+                    },
+                    "voiceVersion": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 1000000
+                    },
+                    "briefId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^brf_[0-9a-f]{32}$"
+                    },
+                    "model": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "maxLength": 64,
+                      "format": "date-time"
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "maxLength": 64,
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "prospectId",
+                    "campaignId",
+                    "stepKey",
+                    "channel",
+                    "goal",
+                    "language",
+                    "subject",
+                    "body",
+                    "revision",
+                    "source",
+                    "citations",
+                    "ungrounded",
+                    "wonDealCount",
+                    "checks",
+                    "autoSendable",
+                    "brandVoiceId",
+                    "voiceVersion",
+                    "briefId",
+                    "model",
+                    "createdAt",
+                    "updatedAt"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "A new Draft.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^drf_[0-9a-f]{32}$"
+                    },
+                    "prospectId": {
+                      "type": "string",
+                      "pattern": "^prs_[0-9a-f]{32}$"
+                    },
+                    "campaignId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^cpg_[0-9a-f]{32}$"
+                    },
+                    "stepKey": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "minLength": 1,
+                      "maxLength": 40,
+                      "pattern": "^[a-z][a-z0-9_-]*$"
+                    },
+                    "channel": {
+                      "type": "string",
+                      "enum": [
+                        "email"
+                      ]
+                    },
+                    "goal": {
+                      "type": "string",
+                      "maxLength": 1000
+                    },
+                    "language": {
+                      "type": "string",
+                      "enum": [
+                        "en"
+                      ]
+                    },
+                    "subject": {
+                      "type": "string",
+                      "maxLength": 400
+                    },
+                    "body": {
+                      "type": "string",
+                      "maxLength": 10000
+                    },
+                    "revision": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 10000
+                    },
+                    "source": {
+                      "type": "string",
+                      "enum": [
+                        "generated",
+                        "edited"
+                      ]
+                    },
+                    "citations": {
+                      "type": "array",
+                      "items": {
+                        "allOf": [
+                          {
+                            "oneOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "prospect_field"
+                                    ]
+                                  },
+                                  "prospectId": {
+                                    "type": "string",
+                                    "pattern": "^prs_[0-9a-f]{32}$"
+                                  },
+                                  "field": {
+                                    "type": "string",
+                                    "enum": [
+                                      "firstName",
+                                      "lastName",
+                                      "jobTitle",
+                                      "email",
+                                      "phone",
+                                      "linkedinUrl"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "prospectId",
+                                  "field"
+                                ]
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "signal"
+                                    ]
+                                  },
+                                  "signalId": {
+                                    "type": "string",
+                                    "pattern": "^sig_[0-9a-f]{32}$"
+                                  },
+                                  "observedAt": {
+                                    "type": "string",
+                                    "maxLength": 64,
+                                    "format": "date-time"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "signalId",
+                                  "observedAt"
+                                ]
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "web_page"
+                                    ]
+                                  },
+                                  "url": {
+                                    "type": "string",
+                                    "maxLength": 2048
+                                  },
+                                  "retrievedAt": {
+                                    "type": "string",
+                                    "maxLength": 64,
+                                    "format": "date-time"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "url",
+                                  "retrievedAt"
+                                ]
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "moment"
+                                    ]
+                                  },
+                                  "callId": {
+                                    "type": "string",
+                                    "pattern": "^call_[0-9a-f]{32}$"
+                                  },
+                                  "dealRecordId": {
+                                    "type": "string",
+                                    "pattern": "^deal_[0-9a-f]{32}$"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "callId",
+                                  "dealRecordId"
+                                ]
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "document"
+                                    ]
+                                  },
+                                  "documentId": {
+                                    "type": "string",
+                                    "pattern": "^doc_[0-9a-f]{32}$"
+                                  },
+                                  "page": {
+                                    "type": [
+                                      "integer",
+                                      "null"
+                                    ],
+                                    "minimum": 1,
+                                    "maximum": 300
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "documentId",
+                                  "page"
+                                ]
+                              }
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "applies": {
+                                "type": "boolean"
+                              },
+                              "score": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "applies"
+                            ]
+                          }
+                        ]
+                      },
+                      "maxItems": 20
+                    },
+                    "ungrounded": {
+                      "type": "boolean"
+                    },
+                    "wonDealCount": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 100
+                    },
+                    "checks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "check": {
+                            "type": "string",
+                            "enum": [
+                              "citations_resolve",
+                              "claims_supported",
+                              "banned_phrase",
+                              "length",
+                              "name_match"
+                            ]
+                          },
+                          "result": {
+                            "type": "string",
+                            "enum": [
+                              "pass",
+                              "fail"
+                            ]
+                          },
+                          "count": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 1000
+                          }
+                        },
+                        "required": [
+                          "check",
+                          "result",
+                          "count"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "autoSendable": {
+                      "type": "boolean"
+                    },
+                    "brandVoiceId": {
+                      "type": "string",
+                      "pattern": "^bvo_[0-9a-f]{32}$"
+                    },
+                    "voiceVersion": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 1000000
+                    },
+                    "briefId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^brf_[0-9a-f]{32}$"
+                    },
+                    "model": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "maxLength": 64,
+                      "format": "date-time"
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "maxLength": 64,
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "prospectId",
+                    "campaignId",
+                    "stepKey",
+                    "channel",
+                    "goal",
+                    "language",
+                    "subject",
+                    "body",
+                    "revision",
+                    "source",
+                    "citations",
+                    "ungrounded",
+                    "wonDealCount",
+                    "checks",
+                    "autoSendable",
+                    "brandVoiceId",
+                    "voiceVersion",
+                    "briefId",
+                    "model",
+                    "createdAt",
+                    "updatedAt"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "request.invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "auth.unauthenticated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "auth.forbidden.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "campaign.not_found, prospect.not_found, voice.not_found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "request.idempotency_in_progress.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^[1-9][0-9]*$",
+                  "description": "Whole seconds to wait before trying again."
+                },
+                "required": true,
+                "description": "Whole seconds to wait before trying again."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "draft.no_prospect_data, request.idempotency_key_reused.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "draft.budget_exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "server.internal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "draft.model_unavailable.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^[1-9][0-9]*$",
+                  "description": "Whole seconds to wait before trying again."
+                },
+                "required": true,
+                "description": "Whole seconds to wait before trying again."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "research.timeout.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/outreach-drafts/{draftId}": {
+      "get": {
+        "description": "Reads one Draft with its Citations (use the Playbook's citation resolve route for the text behind a Moment or document), checks, Brand Voice version and model. Model output is untrusted data: statements and Draft text are shown with their Citations, never run as instructions, and never put in a log or an event. An Owner or Admin sees every Prospect; a Manager those owned by Reps on their Team; a Rep only their own. A Prospect (prospect.not_found), Campaign (campaign.not_found), Research Brief (research.not_found) or Draft (draft.not_found) outside the caller's view is its not_found code (404), never 403, and one of another Organization the same.",
+        "tags": [
+          "drafts"
+        ],
+        "summary": "Read a Draft",
+        "security": [
+          {
+            "accessToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^drf_[0-9a-f]{32}$"
+            },
+            "required": true,
+            "name": "draftId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The Draft.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^drf_[0-9a-f]{32}$"
+                    },
+                    "prospectId": {
+                      "type": "string",
+                      "pattern": "^prs_[0-9a-f]{32}$"
+                    },
+                    "campaignId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^cpg_[0-9a-f]{32}$"
+                    },
+                    "stepKey": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "minLength": 1,
+                      "maxLength": 40,
+                      "pattern": "^[a-z][a-z0-9_-]*$"
+                    },
+                    "channel": {
+                      "type": "string",
+                      "enum": [
+                        "email"
+                      ]
+                    },
+                    "goal": {
+                      "type": "string",
+                      "maxLength": 1000
+                    },
+                    "language": {
+                      "type": "string",
+                      "enum": [
+                        "en"
+                      ]
+                    },
+                    "subject": {
+                      "type": "string",
+                      "maxLength": 400
+                    },
+                    "body": {
+                      "type": "string",
+                      "maxLength": 10000
+                    },
+                    "revision": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 10000
+                    },
+                    "source": {
+                      "type": "string",
+                      "enum": [
+                        "generated",
+                        "edited"
+                      ]
+                    },
+                    "citations": {
+                      "type": "array",
+                      "items": {
+                        "allOf": [
+                          {
+                            "oneOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "prospect_field"
+                                    ]
+                                  },
+                                  "prospectId": {
+                                    "type": "string",
+                                    "pattern": "^prs_[0-9a-f]{32}$"
+                                  },
+                                  "field": {
+                                    "type": "string",
+                                    "enum": [
+                                      "firstName",
+                                      "lastName",
+                                      "jobTitle",
+                                      "email",
+                                      "phone",
+                                      "linkedinUrl"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "prospectId",
+                                  "field"
+                                ]
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "signal"
+                                    ]
+                                  },
+                                  "signalId": {
+                                    "type": "string",
+                                    "pattern": "^sig_[0-9a-f]{32}$"
+                                  },
+                                  "observedAt": {
+                                    "type": "string",
+                                    "maxLength": 64,
+                                    "format": "date-time"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "signalId",
+                                  "observedAt"
+                                ]
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "web_page"
+                                    ]
+                                  },
+                                  "url": {
+                                    "type": "string",
+                                    "maxLength": 2048
+                                  },
+                                  "retrievedAt": {
+                                    "type": "string",
+                                    "maxLength": 64,
+                                    "format": "date-time"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "url",
+                                  "retrievedAt"
+                                ]
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "moment"
+                                    ]
+                                  },
+                                  "callId": {
+                                    "type": "string",
+                                    "pattern": "^call_[0-9a-f]{32}$"
+                                  },
+                                  "dealRecordId": {
+                                    "type": "string",
+                                    "pattern": "^deal_[0-9a-f]{32}$"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "callId",
+                                  "dealRecordId"
+                                ]
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "document"
+                                    ]
+                                  },
+                                  "documentId": {
+                                    "type": "string",
+                                    "pattern": "^doc_[0-9a-f]{32}$"
+                                  },
+                                  "page": {
+                                    "type": [
+                                      "integer",
+                                      "null"
+                                    ],
+                                    "minimum": 1,
+                                    "maximum": 300
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "documentId",
+                                  "page"
+                                ]
+                              }
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "applies": {
+                                "type": "boolean"
+                              },
+                              "score": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "applies"
+                            ]
+                          }
+                        ]
+                      },
+                      "maxItems": 20
+                    },
+                    "ungrounded": {
+                      "type": "boolean"
+                    },
+                    "wonDealCount": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 100
+                    },
+                    "checks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "check": {
+                            "type": "string",
+                            "enum": [
+                              "citations_resolve",
+                              "claims_supported",
+                              "banned_phrase",
+                              "length",
+                              "name_match"
+                            ]
+                          },
+                          "result": {
+                            "type": "string",
+                            "enum": [
+                              "pass",
+                              "fail"
+                            ]
+                          },
+                          "count": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 1000
+                          }
+                        },
+                        "required": [
+                          "check",
+                          "result",
+                          "count"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "autoSendable": {
+                      "type": "boolean"
+                    },
+                    "brandVoiceId": {
+                      "type": "string",
+                      "pattern": "^bvo_[0-9a-f]{32}$"
+                    },
+                    "voiceVersion": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 1000000
+                    },
+                    "briefId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^brf_[0-9a-f]{32}$"
+                    },
+                    "model": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "maxLength": 64,
+                      "format": "date-time"
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "maxLength": 64,
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "prospectId",
+                    "campaignId",
+                    "stepKey",
+                    "channel",
+                    "goal",
+                    "language",
+                    "subject",
+                    "body",
+                    "revision",
+                    "source",
+                    "citations",
+                    "ungrounded",
+                    "wonDealCount",
+                    "checks",
+                    "autoSendable",
+                    "brandVoiceId",
+                    "voiceVersion",
+                    "briefId",
+                    "model",
+                    "createdAt",
+                    "updatedAt"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "auth.unauthenticated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "auth.forbidden.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "draft.not_found, prospect.not_found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "server.internal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/outreach-drafts/{draftId}/regenerate": {
+      "post": {
+        "description": "Writes the Draft again with a new angle and/or tone for the same Prospect and Step; the revision rises. Requires an Idempotency-Key header: a replay answers the same result and does the work once. Model output is untrusted data: statements and Draft text are shown with their Citations, never run as instructions, and never put in a log or an event. An Owner or Admin sees every Prospect; a Manager those owned by Reps on their Team; a Rep only their own. A Prospect (prospect.not_found), Campaign (campaign.not_found), Research Brief (research.not_found) or Draft (draft.not_found) outside the caller's view is its not_found code (404), never 403, and one of another Organization the same.",
+        "tags": [
+          "drafts"
+        ],
+        "summary": "Write a Draft again with a new angle or tone",
+        "security": [
+          {
+            "accessToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^drf_[0-9a-f]{32}$"
+            },
+            "required": true,
+            "name": "draftId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_.:-]+$",
+              "description": "Makes a repeat of the same request change nothing more."
+            },
+            "required": true,
+            "description": "Makes a repeat of the same request change nothing more.",
+            "name": "idempotency-key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "angle": {
+                    "type": "string",
+                    "maxLength": 1000
+                  },
+                  "tone": {
+                    "type": "string",
+                    "maxLength": 1000
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The Draft, one revision on.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^drf_[0-9a-f]{32}$"
+                    },
+                    "prospectId": {
+                      "type": "string",
+                      "pattern": "^prs_[0-9a-f]{32}$"
+                    },
+                    "campaignId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^cpg_[0-9a-f]{32}$"
+                    },
+                    "stepKey": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "minLength": 1,
+                      "maxLength": 40,
+                      "pattern": "^[a-z][a-z0-9_-]*$"
+                    },
+                    "channel": {
+                      "type": "string",
+                      "enum": [
+                        "email"
+                      ]
+                    },
+                    "goal": {
+                      "type": "string",
+                      "maxLength": 1000
+                    },
+                    "language": {
+                      "type": "string",
+                      "enum": [
+                        "en"
+                      ]
+                    },
+                    "subject": {
+                      "type": "string",
+                      "maxLength": 400
+                    },
+                    "body": {
+                      "type": "string",
+                      "maxLength": 10000
+                    },
+                    "revision": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 10000
+                    },
+                    "source": {
+                      "type": "string",
+                      "enum": [
+                        "generated",
+                        "edited"
+                      ]
+                    },
+                    "citations": {
+                      "type": "array",
+                      "items": {
+                        "allOf": [
+                          {
+                            "oneOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "prospect_field"
+                                    ]
+                                  },
+                                  "prospectId": {
+                                    "type": "string",
+                                    "pattern": "^prs_[0-9a-f]{32}$"
+                                  },
+                                  "field": {
+                                    "type": "string",
+                                    "enum": [
+                                      "firstName",
+                                      "lastName",
+                                      "jobTitle",
+                                      "email",
+                                      "phone",
+                                      "linkedinUrl"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "prospectId",
+                                  "field"
+                                ]
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "signal"
+                                    ]
+                                  },
+                                  "signalId": {
+                                    "type": "string",
+                                    "pattern": "^sig_[0-9a-f]{32}$"
+                                  },
+                                  "observedAt": {
+                                    "type": "string",
+                                    "maxLength": 64,
+                                    "format": "date-time"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "signalId",
+                                  "observedAt"
+                                ]
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "web_page"
+                                    ]
+                                  },
+                                  "url": {
+                                    "type": "string",
+                                    "maxLength": 2048
+                                  },
+                                  "retrievedAt": {
+                                    "type": "string",
+                                    "maxLength": 64,
+                                    "format": "date-time"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "url",
+                                  "retrievedAt"
+                                ]
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "moment"
+                                    ]
+                                  },
+                                  "callId": {
+                                    "type": "string",
+                                    "pattern": "^call_[0-9a-f]{32}$"
+                                  },
+                                  "dealRecordId": {
+                                    "type": "string",
+                                    "pattern": "^deal_[0-9a-f]{32}$"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "callId",
+                                  "dealRecordId"
+                                ]
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "document"
+                                    ]
+                                  },
+                                  "documentId": {
+                                    "type": "string",
+                                    "pattern": "^doc_[0-9a-f]{32}$"
+                                  },
+                                  "page": {
+                                    "type": [
+                                      "integer",
+                                      "null"
+                                    ],
+                                    "minimum": 1,
+                                    "maximum": 300
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "documentId",
+                                  "page"
+                                ]
+                              }
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "applies": {
+                                "type": "boolean"
+                              },
+                              "score": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "applies"
+                            ]
+                          }
+                        ]
+                      },
+                      "maxItems": 20
+                    },
+                    "ungrounded": {
+                      "type": "boolean"
+                    },
+                    "wonDealCount": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 100
+                    },
+                    "checks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "check": {
+                            "type": "string",
+                            "enum": [
+                              "citations_resolve",
+                              "claims_supported",
+                              "banned_phrase",
+                              "length",
+                              "name_match"
+                            ]
+                          },
+                          "result": {
+                            "type": "string",
+                            "enum": [
+                              "pass",
+                              "fail"
+                            ]
+                          },
+                          "count": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 1000
+                          }
+                        },
+                        "required": [
+                          "check",
+                          "result",
+                          "count"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "autoSendable": {
+                      "type": "boolean"
+                    },
+                    "brandVoiceId": {
+                      "type": "string",
+                      "pattern": "^bvo_[0-9a-f]{32}$"
+                    },
+                    "voiceVersion": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 1000000
+                    },
+                    "briefId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^brf_[0-9a-f]{32}$"
+                    },
+                    "model": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "maxLength": 64,
+                      "format": "date-time"
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "maxLength": 64,
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "prospectId",
+                    "campaignId",
+                    "stepKey",
+                    "channel",
+                    "goal",
+                    "language",
+                    "subject",
+                    "body",
+                    "revision",
+                    "source",
+                    "citations",
+                    "ungrounded",
+                    "wonDealCount",
+                    "checks",
+                    "autoSendable",
+                    "brandVoiceId",
+                    "voiceVersion",
+                    "briefId",
+                    "model",
+                    "createdAt",
+                    "updatedAt"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "request.invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "auth.unauthenticated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "auth.forbidden.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "draft.not_found, prospect.not_found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "draft.invalid_state, request.idempotency_in_progress.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^[1-9][0-9]*$",
+                  "description": "Whole seconds to wait before trying again."
+                },
+                "required": true,
+                "description": "Whole seconds to wait before trying again."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "request.idempotency_key_reused.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "draft.budget_exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "server.internal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "draft.model_unavailable.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^[1-9][0-9]*$",
+                  "description": "Whole seconds to wait before trying again."
+                },
+                "required": true,
+                "description": "Whole seconds to wait before trying again."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "research.timeout.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "webhooks": {}

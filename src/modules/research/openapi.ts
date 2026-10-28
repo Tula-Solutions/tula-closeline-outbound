@@ -1,4 +1,5 @@
 import {
+  CAMPAIGN_ERRORS,
   ERRORS,
   MESSAGING_ERRORS,
   MESSAGING_ROUTES,
@@ -6,13 +7,20 @@ import {
 } from 'tula-closeline-contract'
 import { errorResponse, errorResponseWithRetryAfter } from '~/http/responses'
 
-/** The route names this module implements. */
-export type ResearchRouteName = 'createBrief' | 'getBrief' | 'listBriefs'
+/** The route names the research and draft modules implement. */
+export type ResearchRouteName =
+  | 'createBrief'
+  | 'getBrief'
+  | 'listBriefs'
+  | 'createDraft'
+  | 'getOutreachDraft'
+  | 'regenerateDraft'
 
 const ALL_ERRORS: Record<string, { code: string; status: number }> = {
   ...ERRORS,
   ...MESSAGING_ERRORS,
   'prospect.not_found': PROSPECT_ERRORS['prospect.not_found'],
+  'campaign.not_found': CAMPAIGN_ERRORS['campaign.not_found'],
 }
 
 /** The codes every public route may answer with besides its own. */

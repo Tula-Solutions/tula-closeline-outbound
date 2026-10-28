@@ -24,7 +24,7 @@ export type VoiceCaller = { userId: UserId; organizationId: OrganizationId; role
 const cursorSchema = z.strictObject({ before: z.number().int().min(1).max(1_000_001) })
 
 /** An id that is the same for the same Organization and version, so a racing save collides on it. */
-function versionId(organizationId: string, version: number) {
+export function versionId(organizationId: string, version: number) {
   const hex = new Bun.CryptoHasher('sha256')
     .update(`${organizationId}:brand-voice:${version}`)
     .digest('hex')

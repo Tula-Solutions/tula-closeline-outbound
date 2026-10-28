@@ -11,6 +11,7 @@ import {
   MAX_BRIEF_STATEMENT_LENGTH,
   MAX_BRIEF_STATEMENTS,
   MESSAGING_ERRORS,
+  type OrganizationId,
   PROSPECT_ERRORS,
   type ProspectId,
   type ResearchBrief,
@@ -68,7 +69,7 @@ const prospectNotFound = () => domainError(PROSPECT_ERRORS['prospect.not_found']
 const briefNotFound = () => domainError(MESSAGING_ERRORS['research.not_found'])
 
 /** Strips control characters and cuts the text, so a source cannot carry a page of instructions. */
-function clean(text: string): string {
+export function clean(text: string): string {
   return text
     .replace(/\p{Cc}+/gu, ' ')
     .trim()
@@ -83,7 +84,7 @@ async function assertVisible(deps: ResearchDeps, caller: ResearchCaller, prospec
 }
 
 /** Runs `work` with a deadline; on expiry aborts it and returns 'timeout'. */
-async function withDeadline<T>(ms: number, work: (signal: AbortSignal) => Promise<T>) {
+export async function withDeadline<T>(ms: number, work: (signal: AbortSignal) => Promise<T>) {
   const controller = new AbortController()
   let timer: ReturnType<typeof setTimeout> | undefined
   let grace: ReturnType<typeof setTimeout> | undefined
@@ -130,11 +131,12 @@ function playbookSource(passage: PlaybookPassage): Omit<Source, 'id'> {
   }
 }
 
-/** Asks the model once: the adapter already retries with jittered backoff, so a second layer would multiply. */
-async function askModel(
+/** Asks the model once, under the caller's fixed instructions: the adapter already retries with jittered backoff, so a second layer would multiply. */
+export async function askModel(
   deps: ResearchDeps,
   organizationId: string,
-  sources: readonly ModelSource[]
+  sources: readonly ModelSource[],
+  instructions: string = INSTRUCTIONS
 ): Promise<unknown> {
   const model = deps.model
   if (model === null) {
@@ -143,7 +145,7 @@ async function askModel(
   try {
     const result = await withDeadline(deps.limits.modelTimeoutMs, (signal) =>
       model.generate({
-        instructions: INSTRUCTIONS,
+        instructions,
         sources,
         maxOutputTokens: 2000,
         organizationId,
@@ -182,16 +184,36 @@ export async function createBrief(
     }
     return { brief: earlier, created: false }
   }
-  return buildBrief(deps, caller, prospectId, options)
+  return buildBrief(deps, organizationId, prospectId, options)
+}
+
+/**
+ * The Brief a Draft rests on: the one this key built, else a fresh cached one, else a new Brief. Unlike
+ * `createBrief` it has no caller: the engine drafts for a Prospect it already holds.
+ */
+export async function ensureBrief(
+  deps: ResearchDeps,
+  organizationId: OrganizationId,
+  prospectId: ProspectId,
+  idempotencyKey: string
+): Promise<ResearchBrief> {
+  const earlier = await deps.store.byRequestKey(organizationId, idempotencyKey)
+  if (earlier !== null) {
+    if (earlier.prospectId !== prospectId) {
+      throw domainError(ERRORS['request.idempotency_key_reused'])
+    }
+    return earlier
+  }
+  return (await buildBrief(deps, organizationId, prospectId, { refresh: false, idempotencyKey }))
+    .brief
 }
 
 async function buildBrief(
   deps: ResearchDeps,
-  caller: ResearchCaller,
+  organizationId: OrganizationId,
   prospectId: ProspectId,
   options: { refresh: boolean; idempotencyKey: string }
 ): Promise<BriefOutcome> {
-  const { organizationId } = caller
   const input = await deps.core.getEnrichmentInput(organizationId, prospectId)
   if (input === null) {
     throw prospectNotFound()

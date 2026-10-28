@@ -187,6 +187,28 @@ monthly budget applies, and a spent budget is `draft.budget_exceeded`, never ret
 has a memory adapter only. With no model outside `local` a Brief answers `draft.model_unavailable`.
 Logs carry ids and counts only.
 
+## Drafts (`src/modules/draft`)
+
+- `POST /v1/outreach-drafts` writes a Draft from the Prospect, the Research Brief (`Research.ensureBrief`),
+  the Brand Voice and the Organization's Playbook passages; `GET /v1/outreach-drafts/{draftId}`;
+  `POST /v1/outreach-drafts/{draftId}/regenerate` (new angle or tone; the revision rises). The edit and
+  list routes are not built yet. A variant Draft does not keep its variant angle on regenerate (the angle is
+  not stored): pass `angle`, or the Brief angle is used.
+- The model, Playbook and limits are the research module's (`ai.model`, `researchLimits`); the adapter owns
+  retries. Sources the model may cite get ids `c1..`; guidance (voice, goal, angle, company) gets `ctx-` ids
+  and can never be cited. A claim naming another id counts toward `citations_resolve`.
+- Citations are exactly the sources the model's claims named. `ungrounded` means no cited Moment;
+  `autoSendable` needs a Moment and every check passing. A failing Draft is stored with its checks named.
+- Checks (`checks.ts`): `claims_supported` (numbers and prices must appear in a cited source, the Prospect
+  or the goal), `banned_phrase`, `length`, `name_match` (the greeting name).
+- `Idempotency-Key` is hashed (`drf-<sha256>`) into `outbound.drafts.request_key`; regenerate remembers its
+  latest 32 keys in `regenerate_keys`, so a retry of an older key replays. The engine's `DraftSource`
+  (`source.ts`) uses a key from the Step, so a repeat of a Step gets the same Draft, and stores the Step's
+  variant key (`variant_key`) with it: a later promotion cannot relabel a send.
+- The HTTP route without a Brand Voice is `voice.not_found`; the engine step instead saves a neutral default
+  voice as version 1 and writes with it.
+- Text of the Brief, web pages, Playbook and model output is untrusted; logs carry ids and counts only.
+
 ## Signals and fit (`src/modules/signal`, `src/modules/fit`)
 
 - A Signal is untrusted data: shown to the Rep and to the research brief, never obeyed, never

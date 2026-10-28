@@ -7,6 +7,7 @@ import { registerSecuritySchemes } from '~/http/security'
 import type { AppEnv } from '~/http/types'
 import { createBrandVoiceRouter } from '~/modules/brand-voice/router'
 import { createCampaignRouter } from '~/modules/campaign/router'
+import { createDraftRouter } from '~/modules/draft/router'
 import { createEnrichmentRouter } from '~/modules/enrichment/router'
 import { createSettingsRouter } from '~/modules/enrichment/settings-router'
 import { createFitRouter } from '~/modules/fit/router'
@@ -49,6 +50,7 @@ export function createApp(container: Container): OpenAPIHono<AppEnv> {
   publicRoutes.route('/', createSendRouter(container.send))
   publicRoutes.route('/', createLinkedinRouter(container.linkedin))
   publicRoutes.route('/', createResearchRouter(container.research))
+  publicRoutes.route('/', createDraftRouter(container.drafts))
   app.route('/', publicRoutes)
 
   serveOpenApi(app)

@@ -31,11 +31,7 @@ import { createHttpCoreSuppression } from '~/adapters/http/core-suppression'
 import { createMemoryAudienceCheckStore } from '~/adapters/memory/audience-check-store'
 import { createMemoryCore } from '~/adapters/memory/core'
 import { createMemoryCoreSuppression } from '~/adapters/memory/core-suppression'
-import {
-  createMemoryApprovals,
-  createMemoryDraftSource,
-  createMemoryProspectContacts,
-} from '~/adapters/memory/engine'
+import { createMemoryApprovals, createMemoryProspectContacts } from '~/adapters/memory/engine'
 import { createMemoryLinkedInProvider } from '~/adapters/memory/linkedin-provider'
 import { createMemoryMailTransport } from '~/adapters/memory/mail-transport'
 import { createMemoryModel } from '~/adapters/memory/model'
@@ -45,6 +41,7 @@ import { createMemoryWebSearch } from '~/adapters/memory/web-search'
 import { createPostgresBrandVoiceStore } from '~/adapters/postgres/brand-voice-store'
 import { createPostgresBriefStore } from '~/adapters/postgres/brief-store'
 import { createPostgresCampaignStore } from '~/adapters/postgres/campaign-store'
+import { createPostgresDraftStore } from '~/adapters/postgres/draft-store'
 import { createPostgresEnrollmentStore } from '~/adapters/postgres/enrollment-store'
 import { createPostgresFitStore } from '~/adapters/postgres/fit-store'
 import { createPostgresLinkedinStore } from '~/adapters/postgres/linkedin-store'
@@ -67,6 +64,8 @@ import { type OutboundEnvelope, registry } from '~/messages'
 import type { BrandVoiceDeps } from '~/modules/brand-voice/deps'
 import { campaignHandlers } from '~/modules/campaign/audience'
 import type { CampaignDeps } from '~/modules/campaign/deps'
+import type { DraftDeps } from '~/modules/draft/deps'
+import { createDraftSource } from '~/modules/draft/source'
 import type { EngineDeps } from '~/modules/engine/deps'
 import { engineHandlers, stopForProspect } from '~/modules/engine/service'
 import type { EnrichmentDeps } from '~/modules/enrichment/deps'
@@ -128,6 +127,8 @@ export type Container = {
   signals: SignalDeps
   /** Everything the research module needs. */
   research: ResearchDeps
+  /** Everything the Draft module needs. */
+  drafts: DraftDeps
   /** Everything the mail event module needs: provider notifications and the unsubscribe page. */
   inboundMail: MailEventDeps
   /** Everything the fit module needs; its service functions take this first. */
@@ -378,6 +379,13 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     logger,
     limits: researchLimits(env),
   }
+  const drafts: DraftDeps = {
+    store: createPostgresDraftStore(inOrganization),
+    voices: brandVoice.store,
+    research,
+    clock: systemClock,
+    logger,
+  }
   const fit: FitDeps = {
     store: createPostgresFitStore(inOrganization),
     core: prospectsCore,
@@ -507,15 +515,15 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     },
   }
   if (env.ENVIRONMENT !== 'local') {
-    logger.warn('the Sequence engine uses in-memory drafts, approvals and contacts', {})
+    logger.warn('the Sequence engine uses in-memory approvals and contacts', {})
   }
-  // shortcut: drafts (M06-T7), approvals (M09) and Prospect contacts are in-memory stand-ins; the
-  // placeholder Draft is ungrounded, so nothing is sent unseen until the real ones replace them.
+  // shortcut: approvals (M09) and Prospect contacts are in-memory stand-ins until the real ones
+  // replace them; a Draft with no won-deal Moment is ungrounded, so it never sends unseen.
   const engine: EngineDeps = {
     enrollments: campaigns.enrollments,
     campaigns: campaigns.store,
     send,
-    drafts: createMemoryDraftSource(() => new Date().toISOString()),
+    drafts: createDraftSource(drafts),
     approvals: createMemoryApprovals(),
     contacts: createMemoryProspectContacts(),
     queue,
@@ -561,6 +569,7 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     mailboxes,
     signals,
     research,
+    drafts,
     inboundMail,
     fit,
     send,
