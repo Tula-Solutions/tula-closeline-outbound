@@ -56,6 +56,7 @@ import {
 } from '~/adapters/memory/mail-transport'
 import { createMemoryMailboxStore } from '~/adapters/memory/mailbox-store'
 import { createMemoryModel, type MemoryModel } from '~/adapters/memory/model'
+import { createMemoryPlayStore } from '~/adapters/memory/play-store'
 import {
   createMemoryPlaybookSearch,
   type MemoryPlaybookSearch,
@@ -398,6 +399,7 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
       clock: time.clock,
       logger,
     },
+    plays: { store: createMemoryPlayStore(), research, clock: time.clock, logger },
     researchModel,
     researchWeb,
     researchPlaybook,

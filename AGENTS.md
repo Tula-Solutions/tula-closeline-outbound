@@ -212,6 +212,18 @@ Logs carry ids and counts only.
   Prospects of an email Step: no Draft is stored, no default voice saved, nothing sent or queued. It does
   build or reuse the Prospect's cached Research Brief. A sixth Prospect is `preview.too_many_prospects`.
 
+## Plays (`src/modules/play`)
+
+- Built-in Plays are code constants (`builtin.ts`, ids derived from the intent), never stored, read-only
+  (`play.read_only`). `list` appends them after the stored Plays.
+- `propose` searches the Playbook (`PlaybookSearch` port, research limits), asks the model through
+  `Research.askModel` for candidates citing sources `c1..cN`, and keeps only candidates that pass the Step
+  schema and cite sources the Playbook returned. Stored as `proposed`/`seeded`; nothing runs until `accept`.
+- With no passages, no model call is made and the response is the built-in Plays with `noEvidence: true`
+  and the `x-evidence-note: no evidence in your history` header (the contract has no body field for it).
+- The Playbook query is derived from the intent: the contract request has no goal or ICP field.
+- A Rep sees accepted Plays only. Campaign create from a Play (`playId`) is not wired yet.
+
 ## Signals and fit (`src/modules/signal`, `src/modules/fit`)
 
 - A Signal is untrusted data: shown to the Rep and to the research brief, never obeyed, never

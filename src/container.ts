@@ -48,6 +48,7 @@ import { createPostgresLinkedinStore } from '~/adapters/postgres/linkedin-store'
 import { createPostgresMailEventStore } from '~/adapters/postgres/mail-event-store'
 import { createPostgresMailboxStore } from '~/adapters/postgres/mailbox-store'
 import { createPostgresModelUsageStore } from '~/adapters/postgres/model-usage'
+import { createPostgresPlayStore } from '~/adapters/postgres/play-store'
 import { createPostgresProviderConfig } from '~/adapters/postgres/provider-config'
 import { createPostgresRateLimiter } from '~/adapters/postgres/rate-limiter'
 import { createPostgresSendStore } from '~/adapters/postgres/send-store'
@@ -75,6 +76,7 @@ import { defaultSendSettings, type LinkedinDeps } from '~/modules/linkedin/deps'
 import type { MailboxDeps } from '~/modules/mailbox/deps'
 import type { MailEventDeps } from '~/modules/mailevent/deps'
 import { mailEventHandlers } from '~/modules/mailevent/service'
+import type { PlayDeps } from '~/modules/play/deps'
 import { type ResearchDeps, researchLimits } from '~/modules/research/deps'
 import type { SendDeps } from '~/modules/send/deps'
 import type { SignalDeps } from '~/modules/signal/deps'
@@ -129,6 +131,8 @@ export type Container = {
   research: ResearchDeps
   /** Everything the Draft module needs. */
   drafts: DraftDeps
+  /** Everything the play module needs. */
+  plays: PlayDeps
   /** Everything the mail event module needs: provider notifications and the unsubscribe page. */
   inboundMail: MailEventDeps
   /** Everything the fit module needs; its service functions take this first. */
@@ -386,6 +390,12 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     clock: systemClock,
     logger,
   }
+  const plays: PlayDeps = {
+    store: createPostgresPlayStore(inOrganization),
+    research,
+    clock: systemClock,
+    logger,
+  }
   const fit: FitDeps = {
     store: createPostgresFitStore(inOrganization),
     core: prospectsCore,
@@ -570,6 +580,7 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     signals,
     research,
     drafts,
+    plays,
     inboundMail,
     fit,
     send,
