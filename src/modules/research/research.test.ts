@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { formatId, type ProspectId } from 'tula-closeline-contract'
-import type { ModelRequest } from '~/ports/model'
+import { ModelBudgetExceededError, type ModelRequest } from '~/ports/model'
 import { WebSearchTimeoutError } from '~/ports/web-search'
 import { createTestApp, newOrganizationId, newUserId, type TestIdentity } from '~/testing'
 
@@ -209,6 +209,22 @@ describe('Research Brief', () => {
     const w = await world()
     const empty = await w.brief(w.admin, w.seed(w.admin, {}))
     expect(codeOf(empty.body)).toBe('draft.no_prospect_data')
+  })
+
+  test('the model is told whose spend the call counts against', async () => {
+    const w = await world()
+    await w.brief(w.admin, w.seed(w.admin))
+    expect(w.t.deps.researchModel.requests.at(-1)?.organizationId).toBeDefined()
+  })
+
+  test('a spent model budget answers draft.budget_exceeded and is not retried', async () => {
+    const w = await world({ RESEARCH_MODEL_MAX_TRIES: '3' })
+    const prospect = w.seed(w.admin)
+    w.t.deps.research.sleep = async () => undefined
+    w.t.deps.researchModel.script(new ModelBudgetExceededError())
+    const refused = await w.brief(w.admin, prospect)
+    expect(codeOf(refused.body)).toBe('draft.budget_exceeded')
+    expect(w.t.deps.researchModel.requests).toHaveLength(1)
   })
 
   test('model failures are retried a bounded number of times, then draft.model_unavailable', async () => {

@@ -1,0 +1,4 @@
+{
+  "messages": [{ "id": "m-reply", "threadId": "t-1" }, { "id": "m-bounce", "threadId": "t-2" }],
+  "resultSizeEstimate": 2
+}

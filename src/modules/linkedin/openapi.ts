@@ -13,6 +13,7 @@ export type LinkedinRouteName =
   | 'listRiskAcceptances'
   | 'getSettings'
   | 'updateSettings'
+  | 'updateAccountLimits'
 
 const ALL_ERRORS: Record<string, { code: string; status: number }> = {
   ...ERRORS,

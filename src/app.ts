@@ -13,6 +13,7 @@ import { createFitRouter } from '~/modules/fit/router'
 import { createHealthRouter } from '~/modules/health/router'
 import { createLinkedinRouter } from '~/modules/linkedin/router'
 import { createMailboxRouter } from '~/modules/mailbox/router'
+import { createMailEventRouter } from '~/modules/mailevent/router'
 import { createResearchRouter } from '~/modules/research/router'
 import { createSendRouter } from '~/modules/send/router'
 import { createSignalRouter, createSignalWebhookRouter } from '~/modules/signal/router'
@@ -31,6 +32,8 @@ export function createApp(container: Container): OpenAPIHono<AppEnv> {
 
   // The webhook is signed, not token-authenticated, so it is mounted before the token middleware.
   app.route('/', createSignalWebhookRouter(container.signals))
+  // Provider notifications and the unsubscribe page carry a signed state or token, not a user token.
+  app.route('/', createMailEventRouter(container.inboundMail))
 
   const publicRoutes = createRouter<AuthedEnv>()
   publicRoutes.use('/v1/*', authenticate(container))

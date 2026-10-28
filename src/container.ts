@@ -19,13 +19,23 @@ import {
 } from 'tula-closeline-kit'
 import { type Consumer, createSqsQueue } from 'tula-closeline-kit/queue'
 import { createMemoryContactGuard, createMemoryQueue } from 'tula-closeline-kit/testing'
+import { createAnthropicModel } from '~/adapters/anthropic/model'
 import { createLocalKeySecretBox, createUnconfiguredSecretBox } from '~/adapters/crypto/secret-box'
 import { createSecretBoxVault } from '~/adapters/crypto/vault'
+import { createExaWebSearch } from '~/adapters/exa/web-search'
 import { createGmailMailTransport } from '~/adapters/gmail/mail-transport'
+import { createGooglePushVerifier } from '~/adapters/gmail/push-verifier'
 import { createGraphMailTransport } from '~/adapters/graph/mail-transport'
 import { createHttpCoreProspects } from '~/adapters/http/core'
+import { createHttpCoreSuppression } from '~/adapters/http/core-suppression'
 import { createMemoryAudienceCheckStore } from '~/adapters/memory/audience-check-store'
 import { createMemoryCore } from '~/adapters/memory/core'
+import { createMemoryCoreSuppression } from '~/adapters/memory/core-suppression'
+import {
+  createMemoryApprovals,
+  createMemoryDraftSource,
+  createMemoryProspectContacts,
+} from '~/adapters/memory/engine'
 import { createMemoryLinkedInProvider } from '~/adapters/memory/linkedin-provider'
 import { createMemoryMailTransport } from '~/adapters/memory/mail-transport'
 import { createMemoryModel } from '~/adapters/memory/model'
@@ -38,8 +48,11 @@ import { createPostgresCampaignStore } from '~/adapters/postgres/campaign-store'
 import { createPostgresEnrollmentStore } from '~/adapters/postgres/enrollment-store'
 import { createPostgresFitStore } from '~/adapters/postgres/fit-store'
 import { createPostgresLinkedinStore } from '~/adapters/postgres/linkedin-store'
+import { createPostgresMailEventStore } from '~/adapters/postgres/mail-event-store'
 import { createPostgresMailboxStore } from '~/adapters/postgres/mailbox-store'
+import { createPostgresModelUsageStore } from '~/adapters/postgres/model-usage'
 import { createPostgresProviderConfig } from '~/adapters/postgres/provider-config'
+import { createPostgresRateLimiter } from '~/adapters/postgres/rate-limiter'
 import { createPostgresSendStore } from '~/adapters/postgres/send-store'
 import { createPostgresSignalStore } from '~/adapters/postgres/signal-store'
 import { createPostgresEnrichmentStore } from '~/adapters/postgres/store'
@@ -54,14 +67,20 @@ import { type OutboundEnvelope, registry } from '~/messages'
 import type { BrandVoiceDeps } from '~/modules/brand-voice/deps'
 import { campaignHandlers } from '~/modules/campaign/audience'
 import type { CampaignDeps } from '~/modules/campaign/deps'
+import type { EngineDeps } from '~/modules/engine/deps'
+import { engineHandlers, stopForProspect } from '~/modules/engine/service'
 import type { EnrichmentDeps } from '~/modules/enrichment/deps'
 import { enrichmentHandlers } from '~/modules/enrichment/handlers'
 import type { FitDeps } from '~/modules/fit/deps'
-import type { LinkedinDeps } from '~/modules/linkedin/deps'
+import { defaultSendSettings, type LinkedinDeps } from '~/modules/linkedin/deps'
 import type { MailboxDeps } from '~/modules/mailbox/deps'
+import type { MailEventDeps } from '~/modules/mailevent/deps'
+import { mailEventHandlers } from '~/modules/mailevent/service'
 import { type ResearchDeps, researchLimits } from '~/modules/research/deps'
 import type { SendDeps } from '~/modules/send/deps'
 import type { SignalDeps } from '~/modules/signal/deps'
+import type { Model } from '~/ports/model'
+import type { WebSearch } from '~/ports/web-search'
 import { trackerSafe } from '~/tracker-safe'
 
 /** One dependency probe for `/readyz`: resolve when healthy, reject or stall when not. */
@@ -109,12 +128,18 @@ export type Container = {
   signals: SignalDeps
   /** Everything the research module needs. */
   research: ResearchDeps
+  /** Everything the mail event module needs: provider notifications and the unsubscribe page. */
+  inboundMail: MailEventDeps
   /** Everything the fit module needs; its service functions take this first. */
   fit: FitDeps
   /** Everything the send pipeline needs. */
   send: SendDeps
   /** Everything the LinkedIn module needs; its service functions take this first. */
   linkedin: LinkedinDeps
+  /** Everything the Sequence engine needs; `server.ts` runs its sweep on a timer. */
+  engine: EngineDeps
+  /** The model and web search: the real vendors when their keys are set, memory stand-ins when `local`, otherwise null. */
+  ai: { model: Model | null; web: WebSearch | null }
   /** The queue consumer; built here, started by `server.ts` and stopped on shutdown. */
   consumer: Consumer
   /** Probes run by `/readyz`: the database. */
@@ -278,7 +303,7 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     store: createPostgresCampaignStore(inOrganization),
     access: core.access,
     clock: systemClock,
-    enrollments: createPostgresEnrollmentStore(inOrganization),
+    enrollments: createPostgresEnrollmentStore(inOrganization, database.db),
     checks: createMemoryAudienceCheckStore(),
     audience: core.audience,
     guard: guardHttp ?? createMemoryContactGuard(),
@@ -304,15 +329,50 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     events: signalEvents,
   }
   const local = env.ENVIRONMENT === 'local'
-  // shortcut: the model and web search are memory stand-ins (no vendor chosen, #290), so outside
-  // `local` there is no model and briefs answer draft.model_unavailable.
+  const aiBounds = {
+    timeoutMs: env.AI_CALL_TIMEOUT_MS,
+    maxTries: env.AI_CALL_MAX_TRIES,
+    retryBaseMs: env.AI_RETRY_BASE_MS,
+    sleep: systemSleep,
+    random: Math.random,
+  }
+  const ai: Container['ai'] = {
+    model:
+      env.ANTHROPIC_API_KEY !== undefined
+        ? createAnthropicModel({
+            ...aiBounds,
+            apiKey: env.ANTHROPIC_API_KEY,
+            baseUrl: env.ANTHROPIC_BASE_URL,
+            model: env.ANTHROPIC_MODEL,
+            noTraining: env.ANTHROPIC_NO_TRAINING_CONFIRMED === 'true',
+            usage: createPostgresModelUsageStore(inOrganization),
+            monthlyBudgetMicros: env.MODEL_MONTHLY_BUDGET_MICROS,
+            inputMicrosPerMillion: env.MODEL_INPUT_MICROS_PER_MILLION,
+            outputMicrosPerMillion: env.MODEL_OUTPUT_MICROS_PER_MILLION,
+            now: () => new Date(systemClock.now()),
+          })
+        : local
+          ? createMemoryModel()
+          : null,
+    web:
+      env.EXA_API_KEY !== undefined
+        ? createExaWebSearch({
+            ...aiBounds,
+            apiKey: env.EXA_API_KEY,
+            baseUrl: env.EXA_BASE_URL,
+            now: () => new Date(systemClock.now()),
+          })
+        : local
+          ? createMemoryWebSearch()
+          : null,
+  }
   const research: ResearchDeps = {
     store: createPostgresBriefStore(inOrganization),
     core: prospectsCore,
     access: core.access,
     signals,
-    model: local ? createMemoryModel() : null,
-    web: local ? createMemoryWebSearch() : null,
+    model: ai.model,
+    web: ai.web,
     playbook: local ? createMemoryPlaybookSearch() : null,
     clock: systemClock,
     sleep: systemSleep,
@@ -337,6 +397,11 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     events: async (organizationId, event) => {
       logger.info('linkedin.channel_disabled', { organizationId, ...event })
     },
+    guard: guardHttp ?? createMemoryContactGuard(),
+    accountPaused: async (organizationId, event) => {
+      logger.info('linkedin.account_paused', { organizationId, ...event })
+    },
+    send: defaultSendSettings(),
     logger,
   }
   const mailboxes: MailboxDeps = {
@@ -403,12 +468,79 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     unsubscribe: { secret: env.MAIL_STATE_SECRET, url: env.MAIL_UNSUBSCRIBE_URL },
     organizationDailyCap: env.MAIL_ORG_DAILY_CAP,
   }
+  const suppressionHttp =
+    coreHttp === undefined
+      ? undefined
+      : createHttpCoreSuppression({
+          baseUrl: env.CORE_URL as string,
+          secret: env.CORE_INTERNAL_SECRET as string,
+          environment: env.ENVIRONMENT,
+          timeoutMs: env.CORE_CALL_TIMEOUT_MS,
+          maxAttempts: env.CORE_CALL_MAX_TRIES,
+          logger,
+        })
+  const inboundMail: MailEventDeps = {
+    mailboxes,
+    sends: send.store,
+    enrollments: campaigns.enrollments,
+    log: createPostgresMailEventStore(inOrganization),
+    prospects: prospectsCore,
+    suppression: suppressionHttp ?? createMemoryCoreSuppression(),
+    clock: systemClock,
+    logger,
+    secret: env.MAIL_STATE_SECRET,
+    rateLimit: createPostgresRateLimiter(database.db),
+    trustedProxyHops: env.TRUSTED_PROXY_HOPS,
+    verifyPush:
+      env.GMAIL_PUSH_AUDIENCE !== undefined && env.GMAIL_PUSH_SERVICE_ACCOUNT !== undefined
+        ? createGooglePushVerifier({
+            audience: env.GMAIL_PUSH_AUDIENCE,
+            serviceAccount: env.GMAIL_PUSH_SERVICE_ACCOUNT,
+            now: () => systemClock.now().getTime(),
+          })
+        : // Without the audience and account the webhook cannot tell Google from anyone; only local runs open.
+          async () => env.ENVIRONMENT === 'local',
+    queue,
+    stopProspect: (organizationId, prospectId, reason) =>
+      stopForProspect(engine, organizationId, prospectId, reason),
+    // There is no event bus in this service yet; the event is logged (ids only) until one exists.
+    publish: async (organizationId, event) => {
+      logger.info(event.name, { organizationId, ...event.payload })
+    },
+  }
+  if (env.ENVIRONMENT !== 'local') {
+    logger.warn('the Sequence engine uses in-memory drafts, approvals and contacts', {})
+  }
+  // shortcut: drafts (M06-T7), approvals (M09) and Prospect contacts are in-memory stand-ins; the
+  // placeholder Draft is ungrounded, so nothing is sent unseen until the real ones replace them.
+  const engine: EngineDeps = {
+    enrollments: campaigns.enrollments,
+    campaigns: campaigns.store,
+    send,
+    drafts: createMemoryDraftSource(() => new Date().toISOString()),
+    approvals: createMemoryApprovals(),
+    contacts: createMemoryProspectContacts(),
+    queue,
+    clock: systemClock,
+    random: Math.random,
+    logger,
+    limits: {
+      orgBatch: env.ENGINE_ORG_BATCH,
+      stepPage: env.ENGINE_STEP_PAGE,
+      leaseSeconds: env.ENGINE_LEASE_SECONDS,
+    },
+  }
   const consumer = createOutboundConsumer({
     queue,
     store: processed,
     logger,
     errorReporter: errors,
-    handlers: { ...enrichmentHandlers(enrichment), ...campaignHandlers(campaigns) },
+    handlers: {
+      ...enrichmentHandlers(enrichment),
+      ...campaignHandlers(campaigns),
+      ...engineHandlers(engine),
+      ...mailEventHandlers(inboundMail),
+    },
     concurrency: env.CONSUMER_CONCURRENCY,
   })
 
@@ -431,9 +563,12 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     mailboxes,
     signals,
     research,
+    inboundMail,
     fit,
     send,
     linkedin,
+    engine,
+    ai,
     consumer,
     readinessChecks: [
       {

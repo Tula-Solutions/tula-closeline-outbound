@@ -26,6 +26,30 @@ export function createMemoryLinkedinStore(): MemoryLinkedinStore {
   const accounts = new Map<string, LinkedinAccountRecord>()
   const switches = new Map<string, boolean>()
   const acceptances = new Map<string, RiskAcceptanceRecord[]>()
+  type Sent = {
+    accountId: LinkedinAccountId
+    kind: string
+    day: string
+    state: 'sending' | 'sent'
+    at: string
+  }
+  const sends = new Map<string, Sent>()
+  const usage = new Map<string, { connections: number; messages: number }>()
+  const usageKey = (organizationId: OrganizationId, id: LinkedinAccountId, day: string) =>
+    `${organizationId}/${id}/${day}`
+  const weekOf = (
+    organizationId: OrganizationId,
+    id: LinkedinAccountId,
+    from: string,
+    to: string
+  ) =>
+    [...usage.entries()]
+      .filter(([k]) => k.startsWith(`${organizationId}/${id}/`))
+      .filter(([k]) => {
+        const day = k.slice(k.lastIndexOf('/') + 1)
+        return day >= from && day <= to
+      })
+      .reduce((sum, [, v]) => sum + v.connections, 0)
   const key = (organizationId: OrganizationId, id: LinkedinAccountId) => `${organizationId}/${id}`
   const inOrg = (organizationId: OrganizationId) =>
     [...accounts.entries()].filter(([k]) => k.startsWith(`${organizationId}/`)).map(([, v]) => v)
@@ -165,6 +189,112 @@ export function createMemoryLinkedinStore(): MemoryLinkedinStore {
       const previous = switches.get(organizationId) ?? false
       switches.set(organizationId, enabled)
       return { previous }
+    },
+
+    // Nothing awaits between the check and the write, so concurrent callers take turns.
+    async reserve(organizationId, input) {
+      const account = accounts.get(key(organizationId, input.accountId))
+      if (account === undefined) {
+        throw new Error('reserve: no such account')
+      }
+      if (account.status !== 'connected') {
+        return { status: 'not_connected' }
+      }
+      const sendKey = `${organizationId}/${input.sendKey}`
+      const earlier = sends.get(sendKey)
+      if (earlier !== undefined) {
+        return { status: 'duplicate', state: earlier.state }
+      }
+      const row = usage.get(usageKey(organizationId, input.accountId, input.day)) ?? {
+        connections: 0,
+        messages: 0,
+      }
+      if (input.kind === 'message') {
+        if (row.messages >= account.limits.dailyMessages) {
+          return { status: 'over_limit', limit: 'daily' }
+        }
+        row.messages++
+      } else {
+        if (row.connections >= account.limits.dailyConnections) {
+          return { status: 'over_limit', limit: 'daily' }
+        }
+        if (
+          weekOf(organizationId, input.accountId, input.weekStart, input.day) >=
+          account.limits.weeklyConnections
+        ) {
+          return { status: 'over_limit', limit: 'weekly' }
+        }
+        row.connections++
+      }
+      usage.set(usageKey(organizationId, input.accountId, input.day), row)
+      sends.set(sendKey, {
+        accountId: input.accountId,
+        kind: input.kind,
+        day: input.day,
+        state: 'sending',
+        at: input.at,
+      })
+      return { status: 'reserved' }
+    },
+
+    async markSent(organizationId, sendKey, at) {
+      const row = sends.get(`${organizationId}/${sendKey}`)
+      if (row !== undefined && row.state === 'sending') {
+        sends.set(`${organizationId}/${sendKey}`, { ...row, state: 'sent', at })
+      }
+    },
+
+    async release(organizationId, sendKey) {
+      const row = sends.get(`${organizationId}/${sendKey}`)
+      if (row === undefined || row.state !== 'sending') {
+        return false
+      }
+      sends.delete(`${organizationId}/${sendKey}`)
+      const used = usage.get(usageKey(organizationId, row.accountId, row.day))
+      if (used !== undefined) {
+        if (row.kind === 'message') {
+          used.messages = Math.max(0, used.messages - 1)
+        } else {
+          used.connections = Math.max(0, used.connections - 1)
+        }
+      }
+      return true
+    },
+
+    async pause(organizationId, id, status, reason, at) {
+      const record = accounts.get(key(organizationId, id))
+      if (record === undefined || record.status !== 'connected') {
+        return null
+      }
+      const next: LinkedinAccountRecord = { ...record, status, pauseReason: reason, updatedAt: at }
+      accounts.set(key(organizationId, id), next)
+      return next
+    },
+
+    async setLimits(organizationId, id, limits, at) {
+      const record = accounts.get(key(organizationId, id))
+      if (record === undefined) {
+        return null
+      }
+      const next: LinkedinAccountRecord = { ...record, limits, updatedAt: at }
+      accounts.set(key(organizationId, id), next)
+      return next
+    },
+
+    async usageOf(organizationId, id, day, weekStart) {
+      const row = usage.get(usageKey(organizationId, id, day))
+      return {
+        connections: row?.connections ?? 0,
+        messages: row?.messages ?? 0,
+        weeklyConnections: weekOf(organizationId, id, weekStart, day),
+      }
+    },
+
+    async lastSendAt(organizationId, id) {
+      const times = [...sends.entries()]
+        .filter(([k, v]) => k.startsWith(`${organizationId}/`) && v.accountId === id)
+        .map(([, v]) => v.at)
+      return times.length === 0 ? null : times.reduce((a, b) => (a > b ? a : b))
     },
 
     setChannel(organizationId, state) {

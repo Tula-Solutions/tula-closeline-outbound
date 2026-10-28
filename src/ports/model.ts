@@ -7,6 +7,8 @@ export type ModelRequest = {
   instructions: string
   sources: readonly ModelSource[]
   maxOutputTokens: number
+  /** Whose monthly spend this call counts against; a real adapter refuses a call without it. */
+  organizationId?: string
   /** Aborts when the call has run out of time. */
   signal: AbortSignal
 }
@@ -17,4 +19,31 @@ export type Model = {
   name: string
   /** One generation; throws when the vendor fails. */
   generate: (request: ModelRequest) => Promise<unknown>
+}
+
+/** Thrown before any call when the Organization has used its month's model budget (`draft.budget_exceeded`). */
+export class ModelBudgetExceededError extends Error {
+  constructor() {
+    super('model: monthly budget exceeded')
+    this.name = 'ModelBudgetExceededError'
+  }
+}
+
+/** Why a model call failed; fixed words only, never vendor text or the key. */
+export type ModelFailure =
+  | 'timeout'
+  | 'rate_limited'
+  | 'key_rejected'
+  | 'invalid_response'
+  | 'provider_error'
+
+/** Thrown when the vendor cannot give a usable answer. */
+export class ModelError extends Error {
+  readonly failure: ModelFailure
+
+  constructor(failure: ModelFailure) {
+    super(`model call failed: ${failure}`)
+    this.name = 'ModelError'
+    this.failure = failure
+  }
 }

@@ -29,6 +29,15 @@ import { createMemoryBrandVoiceStore } from '~/adapters/memory/brand-voice-store
 import { createMemoryBriefStore } from '~/adapters/memory/brief-store'
 import { createMemoryCampaignStore } from '~/adapters/memory/campaign-store'
 import { createMemoryCore, type MemoryCore } from '~/adapters/memory/core'
+import {
+  createMemoryCoreSuppression,
+  type MemoryCoreSuppression,
+} from '~/adapters/memory/core-suppression'
+import {
+  createMemoryApprovals,
+  createMemoryDraftSource,
+  createMemoryProspectContacts,
+} from '~/adapters/memory/engine'
 import { createMemoryEnrollmentStore } from '~/adapters/memory/enrollment-store'
 import { createMemoryFitStore } from '~/adapters/memory/fit-store'
 import {
@@ -39,6 +48,7 @@ import {
   createMemoryLinkedinStore,
   type MemoryLinkedinStore,
 } from '~/adapters/memory/linkedin-store'
+import { createMemoryMailEventStore } from '~/adapters/memory/mail-event-store'
 import {
   createMemoryMailTransport,
   type MemoryMailTransport,
@@ -51,6 +61,7 @@ import {
 } from '~/adapters/memory/playbook-search'
 import { createMemoryProviderConfig } from '~/adapters/memory/provider-config'
 import type { MemoryProvider, MemoryVerifier } from '~/adapters/memory/providers'
+import { createMemoryRateLimiter } from '~/adapters/memory/rate-limiter'
 import { createMemorySecretBox } from '~/adapters/memory/secret-box'
 import { createMemorySendStore } from '~/adapters/memory/send-store'
 import { createMemorySignalStore } from '~/adapters/memory/signal-store'
@@ -64,11 +75,21 @@ import type { AppEnv } from '~/http/types'
 import { SERVICE } from '~/info'
 import { type OutboundDefinition, registry } from '~/messages'
 import { campaignHandlers } from '~/modules/campaign/audience'
+import { engineHandlers, stopForProspect } from '~/modules/engine/service'
 import { enrichmentHandlers } from '~/modules/enrichment/handlers'
-import type { LinkedinChannelDisabled } from '~/modules/linkedin/deps'
+import {
+  defaultSendSettings,
+  type LinkedinAccountPaused,
+  type LinkedinChannelDisabled,
+} from '~/modules/linkedin/deps'
 import type { MailboxStateChanged } from '~/modules/mailbox/deps'
+import type { MailEvent } from '~/modules/mailevent/deps'
+import { mailEventHandlers } from '~/modules/mailevent/service'
 import { researchLimits } from '~/modules/research/deps'
 import type { SignalDeps, SignalEvent } from '~/modules/signal/deps'
+
+/** The Authorization header the test push verifier accepts. */
+export const PUSH_AUTHORIZATION = 'Bearer test-push-token'
 
 /** The issuer and audience the test environment's tokens carry. */
 const TEST_ISSUER = 'https://auth.test'
@@ -90,6 +111,10 @@ export type TestDeps = Container & {
   store: ReturnType<typeof createMemoryEnrichmentStore>
   /** The kit's memory error reporter: what the consumer and the error handler would send to Sentry. */
   errors: MemoryErrorReporter
+  /** The engine's Draft, approvals and contact stand-ins: shape a Draft, read what went to approvals. */
+  engineDrafts: ReturnType<typeof createMemoryDraftSource>
+  engineApprovals: ReturnType<typeof createMemoryApprovals>
+  engineContacts: ReturnType<typeof createMemoryProspectContacts>
   /** The Gmail stand-in: consent as a person, revoke a grant, fail the provider, read what was sent. */
   mail: MemoryMailTransport
   /** The Outlook stand-in, same controls. */
@@ -104,10 +129,18 @@ export type TestDeps = Container & {
   researchPlaybook: MemoryPlaybookSearch
   /** Every `mailbox.state_changed` published, in order. */
   mailEvents: { organizationId: string; event: MailboxStateChanged }[]
+  /** The mail event module's deps: provider notifications and the unsubscribe page. */
+  inboundMail: Container['inboundMail']
+  /** The suppression stand-in for core: what bounces, complaints and unsubscribes suppressed. */
+  suppression: MemoryCoreSuppression
+  /** Every `mail.*` event published, in order. */
+  inboundEvents: { organizationId: string; event: MailEvent }[]
   /** Every `signal.recorded` and `prospect.fit_changed` published, in order. */
   signalEvents: { organizationId: string; event: SignalEvent }[]
   /** The `linkedin.channel_disabled` events published, in order. */
   linkedinEvents: { organizationId: string; event: LinkedinChannelDisabled }[]
+  /** The `linkedin.account_paused` events published, in order. */
+  linkedinPaused: { organizationId: string; event: LinkedinAccountPaused }[]
   /** Every JSON log line written, in order. */
   logLines: string[]
   /** Every call to `reportError`, in order. */
@@ -268,7 +301,47 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     organizationDailyCap: env.MAIL_ORG_DAILY_CAP,
   }
 
+  const suppression = createMemoryCoreSuppression()
+  const inboundEvents: TestDeps['inboundEvents'] = []
+  const inboundMail: Container['inboundMail'] = {
+    mailboxes,
+    sends: send.store,
+    enrollments: campaigns.enrollments,
+    log: createMemoryMailEventStore(),
+    prospects: core.prospects,
+    suppression,
+    clock: time.clock,
+    logger,
+    secret: env.MAIL_STATE_SECRET,
+    rateLimit: createMemoryRateLimiter(time.clock),
+    trustedProxyHops: env.TRUSTED_PROXY_HOPS,
+    verifyPush: async (authorization) => authorization === PUSH_AUTHORIZATION,
+    queue,
+    stopProspect: (organizationId, prospectId, reason) =>
+      stopForProspect(engine, organizationId, prospectId, reason),
+    publish: async (organizationId, event) => {
+      inboundEvents.push({ organizationId, event })
+    },
+  }
+  const engineDrafts = createMemoryDraftSource(() => time.clock.now().toISOString())
+  const engineApprovals = createMemoryApprovals()
+  const engineContacts = createMemoryProspectContacts()
+  const engine: Container['engine'] = {
+    enrollments: campaigns.enrollments,
+    campaigns: campaigns.store,
+    send,
+    drafts: engineDrafts,
+    approvals: engineApprovals,
+    contacts: engineContacts,
+    queue,
+    clock: time.clock,
+    random: Math.random,
+    logger,
+    limits: { orgBatch: 50, stepPage: 100, leaseSeconds: 600 },
+  }
+
   const linkedinEvents: TestDeps['linkedinEvents'] = []
+  const linkedinPaused: TestDeps['linkedinPaused'] = []
   const linkedinProvider = createMemoryLinkedInProvider(time.clock)
   const linkedinStore = createMemoryLinkedinStore()
   const linkedin: Container['linkedin'] = {
@@ -279,6 +352,12 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     events: async (organizationId, event) => {
       linkedinEvents.push({ organizationId, event })
     },
+    guard,
+    accountPaused: async (organizationId, event) => {
+      linkedinPaused.push({ organizationId, event })
+    },
+    // No waiting in tests, no jitter, and no gap between sends unless a test sets one.
+    send: defaultSendSettings({ sleep: async () => {}, random: () => 0, minGapMs: 0, jitterMs: 0 }),
     logger,
   }
 
@@ -319,12 +398,21 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     signalEvents,
     send,
     linkedin,
+    engine,
+    engineDrafts,
+    engineApprovals,
+    engineContacts,
+    ai: { model: researchModel, web: researchWeb },
     linkedinProvider,
     linkedinStore,
     mail,
     outlookMail,
     mailEvents,
+    inboundMail,
+    suppression,
+    inboundEvents,
     linkedinEvents,
+    linkedinPaused,
     core,
     guard,
     config,
@@ -334,7 +422,12 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
       store: processed,
       logger,
       errorReporter: errors,
-      handlers: { ...enrichmentHandlers(enrichment), ...campaignHandlers(campaigns) },
+      handlers: {
+        ...enrichmentHandlers(enrichment),
+        ...campaignHandlers(campaigns),
+        ...engineHandlers(engine),
+        ...mailEventHandlers(inboundMail),
+      },
       concurrency: overrides.consumerConcurrency ?? env.CONSUMER_CONCURRENCY,
       sleep: time.sleep,
     }),

@@ -1,0 +1,15 @@
+{
+  "id": "m-bounce",
+  "threadId": "t-2",
+  "internalDate": "1790000100000",
+  "payload": {
+    "headers": [
+      { "name": "From", "value": "Mail Delivery Subsystem <mailer-daemon@googlemail.com>" },
+      { "name": "Subject", "value": "Delivery Status Notification (Failure)" },
+      {
+        "name": "Content-Type",
+        "value": "multipart/report; report-type=delivery-status; boundary=x"
+      }
+    ]
+  }
+}

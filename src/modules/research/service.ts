@@ -22,7 +22,7 @@ import { domainError } from '~/http/domain-error'
 import * as Signals from '~/modules/signal/service'
 import type { BriefOutcome } from '~/ports/brief-store'
 import type { AccessCaller } from '~/ports/core'
-import type { ModelSource } from '~/ports/model'
+import { ModelBudgetExceededError, type ModelSource } from '~/ports/model'
 import type { PlaybookPassage } from '~/ports/playbook-search'
 import { type WebResult, WebSearchTimeoutError } from '~/ports/web-search'
 import type { ResearchDeps } from './deps'
@@ -126,7 +126,11 @@ function playbookSource(passage: PlaybookPassage): Omit<Source, 'id'> {
 }
 
 /** Asks the model, retrying a failure a bounded number of times with jittered backoff. */
-async function askModel(deps: ResearchDeps, sources: readonly ModelSource[]): Promise<unknown> {
+async function askModel(
+  deps: ResearchDeps,
+  organizationId: string,
+  sources: readonly ModelSource[]
+): Promise<unknown> {
   const model = deps.model
   if (model === null) {
     throw domainError(MESSAGING_ERRORS['draft.model_unavailable'])
@@ -135,13 +139,22 @@ async function askModel(deps: ResearchDeps, sources: readonly ModelSource[]): Pr
   for (let attempt = 1; ; attempt++) {
     try {
       const result = await withDeadline(modelTimeoutMs, (signal) =>
-        model.generate({ instructions: INSTRUCTIONS, sources, maxOutputTokens: 2000, signal })
+        model.generate({
+          instructions: INSTRUCTIONS,
+          sources,
+          maxOutputTokens: 2000,
+          organizationId,
+          signal,
+        })
       )
       if (result === 'timeout') {
         throw new Error('model timeout')
       }
       return result
-    } catch {
+    } catch (error) {
+      if (error instanceof ModelBudgetExceededError) {
+        throw domainError(MESSAGING_ERRORS['draft.budget_exceeded'])
+      }
       if (attempt >= modelMaxTries) {
         throw domainError(MESSAGING_ERRORS['draft.model_unavailable'])
       }
@@ -283,6 +296,7 @@ async function buildBrief(
   const answer = answerSchema.safeParse(
     await askModel(
       deps,
+      organizationId,
       sources.map(({ id, text }) => ({ id, text }))
     )
   )

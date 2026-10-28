@@ -36,6 +36,8 @@ export type MailboxRecord = {
   rampStartedAt: string
   connectedAt: string
   lastSyncedAt: string | null
+  /** Where reading the inbox resumes: the provider's own cursor, opaque to the service. */
+  syncCursor: string | null
 }
 
 /** The sealed tokens of one Mailbox. Both are sealed under `keyId`; a plain token never reaches a store. */
@@ -128,6 +130,27 @@ export type MailboxStore = {
     reason: 'disconnected_by_owner' | 'auth_revoked',
     at: string
   ) => Promise<{ record: MailboxRecord; changed: boolean } | null>
+  /**
+   * Pauses a Mailbox that is sending (warming, healthy or limited) with a reason; `changed` is
+   * false when it was already paused or disconnected. Null when the Mailbox is not there.
+   */
+  pause: (
+    organizationId: OrganizationId,
+    id: MailboxId,
+    reason: 'complaint_spike' | 'bounce_spike',
+    at: string
+  ) => Promise<{ record: MailboxRecord; before: MailboxState; changed: boolean } | null>
+  /**
+   * Records when the inbox was last read and the cursor the next read resumes from, but only if the
+   * stored cursor is still `expected` (the one the caller read); false when a concurrent poll moved it.
+   */
+  markSynced: (
+    organizationId: OrganizationId,
+    id: MailboxId,
+    at: string,
+    expected: string | null,
+    cursor: string | null
+  ) => Promise<boolean>
   /** Records a connect attempt; a repeat of the same `stateHash` changes nothing. */
   registerAttempt: (organizationId: OrganizationId, attempt: StoredAttempt) => Promise<void>
   /**

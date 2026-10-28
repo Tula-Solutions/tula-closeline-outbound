@@ -100,6 +100,12 @@ export type SendStore = {
     organizationId: OrganizationId,
     enrollmentId: string
   ) => Promise<{ mailboxId: MailboxId; providerThreadId: string | null } | null>
+  /** The latest sent message of a Mailbox in this provider thread, or null: how a reply or bounce finds its send. */
+  findByThread: (
+    organizationId: OrganizationId,
+    mailboxId: MailboxId,
+    providerThreadId: string
+  ) => Promise<StoredSend | null>
   /** `sending` rows decided before `before`, oldest first, at most `limit`. */
   listStale: (
     organizationId: OrganizationId,

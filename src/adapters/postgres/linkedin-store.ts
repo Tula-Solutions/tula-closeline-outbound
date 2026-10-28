@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm'
+import { and, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm'
 import type {
   LinkedinAccountId,
   LinkedinRiskAcceptanceId,
@@ -8,6 +8,8 @@ import {
   linkedinAccounts,
   linkedinChannelSettings,
   linkedinRiskAcceptances,
+  linkedinSends,
+  linkedinUsage,
 } from 'tula-closeline-db/schema'
 import type {
   LinkedinAccountRecord,
@@ -302,5 +304,198 @@ export function createPostgresLinkedinStore(inOrganization: InOrganization): Lin
           })
         return { previous: before?.enabled ?? false }
       }),
+
+    // The per-account lock makes the check and the write one step: concurrent reserves take turns.
+    reserve: (organizationId, input) =>
+      inOrganization(organizationId, async (tx) => {
+        await tx.execute(
+          sql`select pg_advisory_xact_lock(hashtext(${`linkedin-quota:${organizationId}:${input.accountId}`}))`
+        )
+        const earlier = await sentState(tx, organizationId, input.sendKey)
+        if (earlier !== null) {
+          return { status: 'duplicate', state: earlier }
+        }
+        const [account] = await tx
+          .select()
+          .from(linkedinAccounts)
+          .where(
+            and(
+              eq(linkedinAccounts.organizationId, organizationId),
+              eq(linkedinAccounts.id, input.accountId)
+            )
+          )
+        if (account === undefined) {
+          throw new Error('reserve: no such account')
+        }
+        if (account.status !== 'connected') {
+          return { status: 'not_connected' }
+        }
+        const used = await usageIn(tx, organizationId, input.accountId, input.day, input.weekStart)
+        if (input.kind === 'message') {
+          if (used.messages >= account.dailyMessageLimit) {
+            return { status: 'over_limit', limit: 'daily' }
+          }
+        } else if (used.connections >= account.dailyConnectionLimit) {
+          return { status: 'over_limit', limit: 'daily' }
+        } else if (used.weeklyConnections >= account.weeklyConnectionLimit) {
+          return { status: 'over_limit', limit: 'weekly' }
+        }
+        await tx.insert(linkedinSends).values({
+          organizationId,
+          sendKey: input.sendKey,
+          accountId: input.accountId,
+          kind: input.kind,
+          state: 'sending',
+          createdAt: new Date(input.at),
+        })
+        const one =
+          input.kind === 'message'
+            ? { connections: 0, messages: 1 }
+            : { connections: 1, messages: 0 }
+        await tx
+          .insert(linkedinUsage)
+          .values({
+            organizationId,
+            accountId: input.accountId,
+            day: input.day,
+            ...one,
+            updatedAt: new Date(input.at),
+          })
+          .onConflictDoUpdate({
+            target: [linkedinUsage.organizationId, linkedinUsage.accountId, linkedinUsage.day],
+            set: {
+              connections: sql`${linkedinUsage.connections} + ${one.connections}`,
+              messages: sql`${linkedinUsage.messages} + ${one.messages}`,
+              updatedAt: new Date(input.at),
+            },
+          })
+        return { status: 'reserved' }
+      }),
+
+    markSent: (organizationId, sendKey, at) =>
+      inOrganization(organizationId, async (tx) => {
+        await tx
+          .update(linkedinSends)
+          .set({ state: 'sent', sentAt: new Date(at) })
+          .where(
+            and(
+              eq(linkedinSends.organizationId, organizationId),
+              eq(linkedinSends.sendKey, sendKey),
+              eq(linkedinSends.state, 'sending')
+            )
+          )
+      }),
+
+    release: (organizationId, sendKey) =>
+      inOrganization(organizationId, async (tx) => {
+        const [row] = await tx
+          .delete(linkedinSends)
+          .where(
+            and(
+              eq(linkedinSends.organizationId, organizationId),
+              eq(linkedinSends.sendKey, sendKey),
+              eq(linkedinSends.state, 'sending')
+            )
+          )
+          .returning()
+        if (row === undefined) {
+          return false
+        }
+        const day = row.createdAt.toISOString().slice(0, 10)
+        const column = row.kind === 'message' ? linkedinUsage.messages : linkedinUsage.connections
+        const name = row.kind === 'message' ? 'messages' : 'connections'
+        await tx
+          .update(linkedinUsage)
+          .set({ [name]: sql`greatest(${column} - 1, 0)` })
+          .where(
+            and(
+              eq(linkedinUsage.organizationId, organizationId),
+              eq(linkedinUsage.accountId, row.accountId),
+              eq(linkedinUsage.day, day)
+            )
+          )
+        return true
+      }),
+
+    pause: (organizationId, id, status, reason, at) =>
+      inOrganization(organizationId, async (tx) => {
+        const [row] = await tx
+          .update(linkedinAccounts)
+          .set({ status, pauseReason: reason, updatedAt: new Date(at) })
+          .where(
+            and(
+              eq(linkedinAccounts.organizationId, organizationId),
+              eq(linkedinAccounts.id, id),
+              eq(linkedinAccounts.status, 'connected')
+            )
+          )
+          .returning()
+        return row === undefined ? null : recordOf(row)
+      }),
+
+    setLimits: (organizationId, id, limits, at) =>
+      inOrganization(organizationId, async (tx) => {
+        const [row] = await tx
+          .update(linkedinAccounts)
+          .set({
+            dailyConnectionLimit: limits.dailyConnections,
+            dailyMessageLimit: limits.dailyMessages,
+            weeklyConnectionLimit: limits.weeklyConnections,
+            updatedAt: new Date(at),
+          })
+          .where(
+            and(eq(linkedinAccounts.organizationId, organizationId), eq(linkedinAccounts.id, id))
+          )
+          .returning()
+        return row === undefined ? null : recordOf(row)
+      }),
+
+    usageOf: (organizationId, id, day, weekStart) =>
+      inOrganization(organizationId, (tx) => usageIn(tx, organizationId, id, day, weekStart)),
+
+    lastSendAt: (organizationId, id) =>
+      inOrganization(organizationId, async (tx) => {
+        const [row] = await tx
+          .select({ at: linkedinSends.createdAt })
+          .from(linkedinSends)
+          .where(
+            and(eq(linkedinSends.organizationId, organizationId), eq(linkedinSends.accountId, id))
+          )
+          .orderBy(desc(linkedinSends.createdAt))
+          .limit(1)
+        return row === undefined ? null : row.at.toISOString()
+      }),
+  }
+}
+
+type Tx = Parameters<Parameters<InOrganization>[1]>[0]
+
+async function sentState(tx: Tx, organizationId: string, sendKey: string) {
+  const [row] = await tx
+    .select({ state: linkedinSends.state })
+    .from(linkedinSends)
+    .where(
+      and(eq(linkedinSends.organizationId, organizationId), eq(linkedinSends.sendKey, sendKey))
+    )
+  return row === undefined ? null : (row.state as 'sending' | 'sent')
+}
+
+async function usageIn(tx: Tx, organizationId: string, id: string, day: string, weekStart: string) {
+  const rows = await tx
+    .select()
+    .from(linkedinUsage)
+    .where(
+      and(
+        eq(linkedinUsage.organizationId, organizationId),
+        eq(linkedinUsage.accountId, id),
+        gte(linkedinUsage.day, weekStart),
+        lte(linkedinUsage.day, day)
+      )
+    )
+  const today = rows.find((r) => r.day === day)
+  return {
+    connections: today?.connections ?? 0,
+    messages: today?.messages ?? 0,
+    weeklyConnections: rows.reduce((sum, r) => sum + r.connections, 0),
   }
 }

@@ -1,7 +1,7 @@
 import { ERRORS, MAIL_ERRORS, MAIL_ROUTES } from 'tula-closeline-contract'
 import { errorResponse, errorResponseWithRetryAfter } from '~/http/responses'
 
-/** The route names this module implements. */
+/** The route names the mailbox and mail event modules implement. */
 export type MailboxRouteName =
   | 'listMailboxes'
   | 'getMailbox'
@@ -10,6 +10,10 @@ export type MailboxRouteName =
   | 'disconnectMailbox'
   | 'testSendMailbox'
   | 'getMailCapacity'
+  | 'receiveGmailNotification'
+  | 'receiveGraphNotification'
+  | 'getUnsubscribePage'
+  | 'confirmUnsubscribe'
 
 const ALL_ERRORS: Record<string, { code: string; status: number }> = { ...ERRORS, ...MAIL_ERRORS }
 
@@ -51,7 +55,7 @@ export function failureResponses(name: MailboxRouteName) {
   for (const [status, list] of [...byStatus].sort(([a], [b]) => a - b)) {
     const description = `${list.sort().join(', ')}.`
     responses[status] =
-      status === 503 || list.includes('request.idempotency_in_progress')
+      status === 429 || status === 503 || list.includes('request.idempotency_in_progress')
         ? errorResponseWithRetryAfter(description)
         : errorResponse(description)
   }

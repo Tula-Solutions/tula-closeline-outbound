@@ -120,6 +120,18 @@ Microsoft yet.
   (anything but `ENVIRONMENT=local`) start answers `server.unavailable`.
 - `completeConnection` (service) records a finished hosted login; no route calls it until the
   provider webhook ticket. The provider's account reference is stored and never returned or logged.
+- `PATCH /v1/linkedin/accounts/{accountId}/limits` (Owner and Admin) lowers an account's limits;
+  above the contract ceiling is `linkedin.limit_above_ceiling`.
+- `sendJob` (`send.ts`) is the guard and pacing for one connection request or message, called by a
+  later sequence runner (there is no LinkedIn Step kind yet): channel, connected account, Contact
+  Check (`consent.suppressed` gives `skipped`/`suppressed`, anything else `no_consent`), a UTC send
+  window and a minimum gap, then `store.reserve` of the day and week quota. Over a limit is
+  `deferred` with `retryAt`, never dropped. The send key makes a retried job send once
+  (`duplicate`); the ledger is `outbound.linkedin_sends`. The provider call has a timeout and
+  bounded jittered retries on `unavailable` only; a timeout or `unknown` outcome keeps the
+  reservation and is never resent (`unknown`). `restricted`, `checkpoint` and `rate_limited` pause
+  that account only (`store.pause` is conditional, so one `linkedin.account_paused` per pause);
+  the container only logs it until there is an event bus.
 
 ## Brand voice (`src/modules/brand-voice`)
 
@@ -188,9 +200,53 @@ the row `sending` (it still counts) and never sends again; `reconcile` settles r
 ten minutes as `sent` with no provider ids, since the provider has no lookup. Any other provider
 error settles `failed`, final for the key (a retry needs a new `attemptEpoch`). Every message
 carries `List-Unsubscribe` (one-click) and a signed link from `MAIL_UNSUBSCRIBE_URL`
-(`unsubscribe.ts`, 30 days); the route behind it is not built. `GET /v1/mail/capacity` shows
+(`unsubscribe.ts`, 30 days). `GET /v1/mail/capacity` shows
 remaining sends and the next send time per Mailbox (`capacity.ts`). No internal `submitSend` HTTP
 route yet (no inbound shared-secret auth).
+
+## Mail events (`src/modules/mailevent`)
+
+Public routes, mounted before the token middleware: the unsubscribe page (`GET`/`POST
+/v1/public/mail/unsubscribe/{token}`, same answer for known and unknown Prospects, only the token's
+Organization is touched) and the Gmail and Graph notification webhooks. A webhook proves itself with
+a signed state naming Organization and Mailbox (`state.ts`, Graph's `clientState`, Gmail's `state`
+query), Gmail's push also with Google's OIDC token (`GMAIL_PUSH_AUDIENCE`,
+`GMAIL_PUSH_SERVICE_ACCOUNT`; outside `local` it refuses everything until both are set); the push
+body is never read. A webhook only verifies and enqueues a `mail.poll` message; the consumer
+(`mailEventHandlers`) runs `pollMailbox`, which pages the inbox from the Mailbox's `syncCursor`
+(Gmail History id, Graph timestamp) through `MailTransport.fetchInbound` (headers only) and does not
+advance the cursor past a notice that failed. `ingest` matches a notice to our Send by thread. Hard
+bounce (or the third soft one in an Enrollment) and complaint suppress through core
+(`CoreSuppression`, HTTP or memory), a complaint also pauses the Mailbox, and a reply, hard bounce,
+complaint and unsubscribe stop the Prospect's Enrollments (`stopProspect` = the engine's
+`stopForProspect`). Each is logged once in `mail_events` (idempotent on the provider message id) and
+published as a `mail.*` event, which today is only logged. Nothing creates the Gmail watch or Graph
+subscription that carries the state, and nothing polls on a timer: webhooks are the only trigger.
+
+The unsubscribe routes are rate limited (`rate.limited`, 429, `Retry-After`) through the
+`RateLimiter` port (Postgres: the db library's `outbound.unsubscribe_rate_counter` functions; memory:
+a test double). An unusable token counts against the client address (20 an hour); a genuine token
+counts against itself (30 an hour) and is never refused because of the address, since an unsubscribe
+is a legal duty and one-click POSTs come from shared provider addresses. Keys are HMACs. The address
+is `TRUSTED_PROXY_HOPS` entries from the right of `X-Forwarded-For` (default 0 = socket address
+only). Nothing purges old counter rows yet (`purgeUnsubscribeRateCounters` exists).
+
+## Sequence engine (`src/modules/engine`)
+
+`sweep` (timer in `server.ts`, `ENGINE_SWEEP_INTERVAL_MS`, 0 = off) asks `dueOrganizations` which
+Organizations have due Enrollments, `claimDue`s a page of each (`FOR UPDATE SKIP LOCKED`, due time moves
+to the end of the lease) and queues one `enrollment.step` message each. `runStep` then re-checks the
+Enrollment is still at that Step and attempt epoch, and acts: email goes through the window check, the
+Contact Check, the Draft source and `send()` (key = Enrollment, Step index, epoch); wait, branch
+(`no_response` + default only), rep_task and end move the Enrollment with a conditional `advance`.
+A Draft that is ungrounded, fails a check or is in a `review` Campaign goes to approvals and the
+Enrollment waits 24 h. `stopForProspect` stops a Prospect's Enrollments (reply, bounce, unsubscribe) and
+must be called by those tickets. The Draft source, approvals and Prospect contacts are in-memory
+stand-ins (shortcuts) until M06-T7, M09 and core serve them, so the sweep is OFF unless
+`ENGINE_ENABLED=true` (state must not live in process memory). A sweep starts at a random Organization
+and wraps, so a backlog cannot starve later ones. Env: `ENGINE_ENABLED`, `ENGINE_SWEEP_INTERVAL_MS`,
+`ENGINE_ORG_BATCH`, `ENGINE_STEP_PAGE`, `ENGINE_LEASE_SECONDS`.
+
 ## Enrichment providers and settings (`src/adapters/providers`, `src/modules/enrichment/settings*.ts`)
 
 Apollo (person, company) and ZeroBounce (email verifier) are the two adapters. Each takes an
@@ -214,6 +270,11 @@ secret box needs `MAIL_SECRET_BOX_KEY`-style configuration; unconfigured, settin
 `POST /v1/enrichment-runs` (`bench/enrichment.bench.test.ts`): O(k) in the Prospects named (at most
 500), never in the Organization's size. One visibility check, one idempotency lookup, one insert and
 the queue publish in batches of ten. The waterfall itself runs from the queue, off the request path.
+`LinkedinStore.reserve` (`bench/linkedin-quota.bench.test.ts`): O(1) per send, one send-key lookup
+and two counters under a per-account advisory lock (Postgres), never the Organization's size.
+`branchTarget` (`bench/engine.bench.test.ts`): O(arms) per Step, no I/O. A sweep tick is O(due rows in a
+page) per Organization, bounded to 10 Organization pages: `claimDue` reads `enrollments_due_idx` in due
+order with a limit. The 10,000-of-1,000,000 case is not measured here (the memory store scans).
 The per-request middleware stack (`createBaseApp`) and `/healthz` keep the budgets in `bench/`.
 
 A benchmark times `measure(operation)`: a warm-up, then several batches, gated on the fastest, so a
@@ -224,3 +285,16 @@ name the function here when a new hot path appears.
 ## Issues
 
 All tickets live in the hub: `gh issue list -R Tula-Solutions/tula-closeline --label repo:outbound`.
+
+## Model and web search (`src/adapters/anthropic`, `src/adapters/exa`)
+
+`container.ai` holds the `Model` and `WebSearch` ports: Anthropic (`ANTHROPIC_API_KEY`, model
+`ANTHROPIC_MODEL`) and Exa (`EXA_API_KEY`) when their keys are set, memory stand-ins when `local`,
+otherwise null. Both go through `adapters/vendor-retry.ts` (per-try timeout, jittered bounded retry,
+fixed-word errors; keys travel only in headers and never reach an error or log). Anthropic answers
+through a forced tool call; sources are escaped `<source>` data blocks; the answer is untrusted.
+Before each call the Organization's month is read from `model_usage` and a spent budget throws
+`ModelBudgetExceededError` (callers map it to `draft.budget_exceeded`); usage is recorded after.
+`ModelRequest.organizationId` is required in practice: a real model refuses a call without it.
+The model refuses to construct unless `ANTHROPIC_NO_TRAINING_CONFIRMED=true`. Budget check then
+record is not atomic, so concurrent calls can overshoot by their own cost.

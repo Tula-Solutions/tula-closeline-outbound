@@ -1,4 +1,5 @@
-import { and, desc, eq, inArray, lt, ne, or } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNotNull, lt, lte, ne, or, sql } from 'drizzle-orm'
+import type { OrganizationId } from 'tula-closeline-contract'
 import {
   type Enrollment,
   type EnrollmentEvent,
@@ -6,6 +7,7 @@ import {
   enrollmentSchema,
   formatId,
 } from 'tula-closeline-contract'
+import type { Database } from 'tula-closeline-db'
 import { outboundEnrollmentEvents, outboundEnrollments } from 'tula-closeline-db/schema'
 import type { EnrollmentStore } from '~/ports/enrollment-store'
 import type { InOrganization } from './store'
@@ -63,8 +65,14 @@ function eventRow(organizationId: string, event: EnrollmentEvent) {
   }
 }
 
-/** The Enrollment store over Postgres; each call runs in one transaction scoped to the Organization. */
-export function createPostgresEnrollmentStore(inOrganization: InOrganization): EnrollmentStore {
+/**
+ * The Enrollment store over Postgres; each call runs in one transaction scoped to the Organization.
+ * `db` is the unscoped handle, used only to ask which Organizations have work due.
+ */
+export function createPostgresEnrollmentStore(
+  inOrganization: InOrganization,
+  db: Pick<Database, 'execute'>
+): EnrollmentStore {
   return {
     insertIfAbsent: (organizationId, enrollment, events) =>
       inOrganization(organizationId, async (tx) => {
@@ -265,6 +273,136 @@ export function createPostgresEnrollmentStore(inOrganization: InOrganization): E
             )
           )
         return new Set(rows.map((row) => row.prospectId as (typeof prospectIds)[number]))
+      }),
+
+    dueOrganizations: async (after, batch) => {
+      const result = await db.execute(
+        sql`select organization_id, resume_after from outbound.organizations_with_work('step_due', ${after}, ${batch})`
+      )
+      const rows = result.rows as { organization_id: string | null; resume_after: string | null }[]
+      return {
+        organizationIds: rows.flatMap((r) =>
+          r.organization_id === null ? [] : [r.organization_id as OrganizationId]
+        ),
+        next: rows[rows.length - 1]?.resume_after ?? null,
+      }
+    },
+
+    claimDue: (organizationId, now, leaseUntil, limit) =>
+      inOrganization(organizationId, async (tx) => {
+        const t = outboundEnrollments
+        const rows = await tx
+          .select()
+          .from(t)
+          .where(
+            and(
+              eq(t.organizationId, organizationId),
+              eq(t.state, 'active'),
+              isNotNull(t.nextDueAt),
+              lte(t.nextDueAt, new Date(now))
+            )
+          )
+          .orderBy(asc(t.nextDueAt), asc(t.id))
+          .limit(limit)
+          .for('update', { skipLocked: true })
+        if (rows.length === 0) {
+          return []
+        }
+        const claimed = await tx
+          .update(t)
+          .set({ nextDueAt: new Date(leaseUntil), updatedAt: new Date(now) })
+          .where(
+            and(
+              eq(t.organizationId, organizationId),
+              inArray(
+                t.id,
+                rows.map((r) => r.id)
+              )
+            )
+          )
+          .returning()
+        return claimed.map(enrollmentOf)
+      }),
+
+    advance: (organizationId, id, expect, to, events) =>
+      inOrganization(organizationId, async (tx) => {
+        const t = outboundEnrollments
+        const [row] = await tx
+          .select()
+          .from(t)
+          .where(and(eq(t.organizationId, organizationId), eq(t.id, id)))
+          .for('update')
+        if (
+          row === undefined ||
+          row.state !== 'active' ||
+          row.currentStepKey !== expect.stepKey ||
+          row.attemptEpoch !== expect.attemptEpoch
+        ) {
+          return null
+        }
+        const [updated] = await tx
+          .update(t)
+          .set(
+            to.state === 'active'
+              ? {
+                  currentStepKey: to.currentStepKey,
+                  currentStep: to.currentStep,
+                  attemptEpoch: to.attemptEpoch,
+                  nextDueAt: new Date(to.nextDueAt),
+                  updatedAt: new Date(),
+                }
+              : {
+                  state: 'completed' as const,
+                  completedAt: new Date(to.at),
+                  nextDueAt: null,
+                  currentStepKey: null,
+                  currentStep: null,
+                  updatedAt: new Date(to.at),
+                }
+          )
+          .where(and(eq(t.organizationId, organizationId), eq(t.id, id)))
+          .returning()
+        if (updated === undefined) {
+          throw new Error('enrollment vanished while locked')
+        }
+        if (events.length > 0) {
+          await tx
+            .insert(outboundEnrollmentEvents)
+            .values(events.map((event) => eventRow(organizationId, event)))
+        }
+        return enrollmentOf(updated)
+      }),
+
+    activeOfProspect: (organizationId, prospectId, limit) =>
+      inOrganization(organizationId, async (tx) => {
+        const t = outboundEnrollments
+        const rows = await tx
+          .select()
+          .from(t)
+          .where(
+            and(
+              eq(t.organizationId, organizationId),
+              eq(t.state, 'active'),
+              eq(t.prospectId, prospectId)
+            )
+          )
+          .orderBy(asc(t.id))
+          .limit(limit)
+        return rows.map(enrollmentOf)
+      }),
+
+    lastEventAt: (organizationId, id, kind) =>
+      inOrganization(organizationId, async (tx) => {
+        const t = outboundEnrollmentEvents
+        const [row] = await tx
+          .select({ at: t.occurredAt })
+          .from(t)
+          .where(
+            and(eq(t.organizationId, organizationId), eq(t.enrollmentId, id), eq(t.kind, kind))
+          )
+          .orderBy(desc(t.occurredAt))
+          .limit(1)
+        return row?.at.toISOString() ?? null
       }),
   }
 }
