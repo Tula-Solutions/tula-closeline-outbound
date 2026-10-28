@@ -349,12 +349,20 @@ export function createPostgresMailboxStore(inOrganization: InOrganization): Mail
         return { record, before: current.state, changed: true }
       }),
 
-    markSynced: (organizationId, id, at, cursor) =>
+    markSynced: (organizationId, id, at, expected, cursor) =>
       inOrganization(organizationId, async (tx) => {
-        await tx
+        const moved = await tx
           .update(mailboxes)
           .set({ lastSyncedAt: new Date(at), syncCursor: cursor })
-          .where(and(eq(mailboxes.organizationId, organizationId), eq(mailboxes.id, id)))
+          .where(
+            and(
+              eq(mailboxes.organizationId, organizationId),
+              eq(mailboxes.id, id),
+              expected === null ? isNull(mailboxes.syncCursor) : eq(mailboxes.syncCursor, expected)
+            )
+          )
+          .returning({ id: mailboxes.id })
+        return moved.length > 0
       }),
 
     registerAttempt: (organizationId, attempt) =>

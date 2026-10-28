@@ -127,6 +127,19 @@ export function describeMailboxStore(label: string, make: () => MailboxStore): v
       ).toBeNull()
     })
 
+    test('markSynced moves the cursor only from the value the caller read', async () => {
+      const store = make()
+      const o = org()
+      const record = newMailboxRecord()
+      await store.connect(o, record, newStoredTokens())
+      const at = '2026-01-04T00:00:00.000Z'
+      expect(await store.markSynced(o, record.id, at, null, 'c1')).toBe(true)
+      // A slower poll that read the old cursor must not move it back or sideways.
+      expect(await store.markSynced(o, record.id, at, null, 'c-stale')).toBe(false)
+      expect(await store.markSynced(o, record.id, at, 'c1', 'c2')).toBe(true)
+      expect((await store.find(o, record.id))?.syncCursor).toBe('c2')
+    })
+
     test('pause stops a sending Mailbox once, and the sync time is kept', async () => {
       const store = make()
       const o = org()
@@ -138,7 +151,9 @@ export function describeMailboxStore(label: string, make: () => MailboxStore): v
       const again = await store.pause(o, record.id, 'bounce_spike', '2026-01-03T00:00:00.000Z')
       expect(again?.changed).toBe(false)
       expect(again?.record.stateReason).toBe('complaint_spike')
-      await store.markSynced(o, record.id, '2026-01-04T00:00:00.000Z', 'cursor-1')
+      expect(
+        await store.markSynced(o, record.id, '2026-01-04T00:00:00.000Z', null, 'cursor-1')
+      ).toBe(true)
       const synced = await store.find(o, record.id)
       expect(synced?.lastSyncedAt).toBe('2026-01-04T00:00:00.000Z')
       expect(synced?.syncCursor).toBe('cursor-1')

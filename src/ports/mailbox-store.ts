@@ -140,13 +140,17 @@ export type MailboxStore = {
     reason: 'complaint_spike' | 'bounce_spike',
     at: string
   ) => Promise<{ record: MailboxRecord; before: MailboxState; changed: boolean } | null>
-  /** Records when the inbox was last read and the cursor the next read resumes from. */
+  /**
+   * Records when the inbox was last read and the cursor the next read resumes from, but only if the
+   * stored cursor is still `expected` (the one the caller read); false when a concurrent poll moved it.
+   */
   markSynced: (
     organizationId: OrganizationId,
     id: MailboxId,
     at: string,
+    expected: string | null,
     cursor: string | null
-  ) => Promise<void>
+  ) => Promise<boolean>
   /** Records a connect attempt; a repeat of the same `stateHash` changes nothing. */
   registerAttempt: (organizationId: OrganizationId, attempt: StoredAttempt) => Promise<void>
   /**

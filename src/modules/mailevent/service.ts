@@ -196,8 +196,15 @@ export async function pollMailbox(
   if (failed > 0) {
     throw new Error(`${failed} mail notice(s) failed; the cursor stays`)
   }
-  await deps.mailboxes.store.markSynced(organizationId, mailboxId, startedAt, page.cursor)
-  return { handled, more: page.more }
+  const moved = await deps.mailboxes.store.markSynced(
+    organizationId,
+    mailboxId,
+    startedAt,
+    record.syncCursor,
+    page.cursor
+  )
+  // A concurrent poll already moved the cursor; it owns the follow-up, so this one does not chain.
+  return { handled, more: moved && page.more }
 }
 
 /** The claims of a genuine, unexpired token; otherwise `unsubscribe.invalid_token` without saying which. */
