@@ -23,10 +23,12 @@ import { createGmailMailTransport } from '~/adapters/gmail/mail-transport'
 import { createGraphMailTransport } from '~/adapters/graph/mail-transport'
 import { createHttpCoreProspects } from '~/adapters/http/core'
 import { createMemoryCore } from '~/adapters/memory/core'
+import { createMemoryLinkedInProvider } from '~/adapters/memory/linkedin-provider'
 import { createMemoryMailTransport } from '~/adapters/memory/mail-transport'
 import { createMemorySecretBox } from '~/adapters/memory/secret-box'
 import { createPostgresBrandVoiceStore } from '~/adapters/postgres/brand-voice-store'
 import { createPostgresCampaignStore } from '~/adapters/postgres/campaign-store'
+import { createPostgresLinkedinStore } from '~/adapters/postgres/linkedin-store'
 import { createPostgresMailboxStore } from '~/adapters/postgres/mailbox-store'
 import { createPostgresProviderConfig } from '~/adapters/postgres/provider-config'
 import { createPostgresEnrichmentStore } from '~/adapters/postgres/store'
@@ -39,6 +41,7 @@ import type { BrandVoiceDeps } from '~/modules/brand-voice/deps'
 import type { CampaignDeps } from '~/modules/campaign/deps'
 import type { EnrichmentDeps } from '~/modules/enrichment/deps'
 import { enrichmentHandlers } from '~/modules/enrichment/handlers'
+import type { LinkedinDeps } from '~/modules/linkedin/deps'
 import type { MailboxDeps } from '~/modules/mailbox/deps'
 import type { CredentialVault } from '~/ports/provider-config'
 import { trackerSafe } from '~/tracker-safe'
@@ -84,6 +87,8 @@ export type Container = {
   brandVoice: BrandVoiceDeps
   /** Everything the mailbox module needs; its service functions take this first. */
   mailboxes: MailboxDeps
+  /** Everything the LinkedIn module needs; its service functions take this first. */
+  linkedin: LinkedinDeps
   /** The queue consumer; built here, started by `server.ts` and stopped on shutdown. */
   consumer: Consumer
   /** Probes run by `/readyz`: the database. */
@@ -231,6 +236,14 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     access: core.access,
     clock: systemClock,
   }
+  const linkedin: LinkedinDeps = {
+    store: createPostgresLinkedinStore(inOrganization),
+    access: core.access,
+    clock: systemClock,
+    // No vendor adapter exists yet: only local runs get the stand-in, anywhere else connecting is unavailable.
+    provider: env.ENVIRONMENT === 'local' ? createMemoryLinkedInProvider(systemClock) : null,
+    logger,
+  }
   const mailboxes: MailboxDeps = {
     store: createPostgresMailboxStore(inOrganization),
     access: core.access,
@@ -316,6 +329,7 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     campaigns,
     brandVoice,
     mailboxes,
+    linkedin,
     consumer,
     readinessChecks: [
       {

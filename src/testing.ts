@@ -25,6 +25,14 @@ import { createMemoryBrandVoiceStore } from '~/adapters/memory/brand-voice-store
 import { createMemoryCampaignStore } from '~/adapters/memory/campaign-store'
 import { createMemoryCore, type MemoryCore } from '~/adapters/memory/core'
 import {
+  createMemoryLinkedInProvider,
+  type MemoryLinkedInProvider,
+} from '~/adapters/memory/linkedin-provider'
+import {
+  createMemoryLinkedinStore,
+  type MemoryLinkedinStore,
+} from '~/adapters/memory/linkedin-store'
+import {
   createMemoryMailTransport,
   type MemoryMailTransport,
 } from '~/adapters/memory/mail-transport'
@@ -65,6 +73,10 @@ export type TestDeps = Container & {
   mail: MemoryMailTransport
   /** The Outlook stand-in, same controls. */
   outlookMail: MemoryMailTransport
+  /** The LinkedIn provider stand-in: complete a hosted login, change an account's status, fail it. */
+  linkedinProvider: MemoryLinkedInProvider
+  /** The LinkedIn store in memory, to set the channel's state. */
+  linkedinStore: MemoryLinkedinStore
   /** Every `mailbox.state_changed` published, in order. */
   mailEvents: { organizationId: string; event: MailboxStateChanged }[]
   /** Every JSON log line written, in order. */
@@ -183,6 +195,16 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     logger,
   }
 
+  const linkedinProvider = createMemoryLinkedInProvider(time.clock)
+  const linkedinStore = createMemoryLinkedinStore()
+  const linkedin: Container['linkedin'] = {
+    store: linkedinStore,
+    access: core.access,
+    clock: time.clock,
+    provider: linkedinProvider,
+    logger,
+  }
+
   return {
     env,
     logger,
@@ -198,6 +220,9 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     campaigns,
     brandVoice,
     mailboxes,
+    linkedin,
+    linkedinProvider,
+    linkedinStore,
     mail,
     outlookMail,
     mailEvents,
