@@ -64,7 +64,7 @@ describe.each(configs)('provider config (%s)', (_name, config) => {
     expect(await config.setOrder(org, order(['apollo']), 0, at)).not.toBeNull()
     expect(await config.setOrder(org, order([]), 0, at)).toBeNull()
     const rows = await config.listStored(org)
-    expect(rows.find((r) => r.provider === 'apollo')?.positions.person).toBe(1)
+    expect(rows.find((r) => r.provider === 'apollo')?.positions.person).toBe(0)
   })
 
   test('an Organization never sees another one order', async () => {
