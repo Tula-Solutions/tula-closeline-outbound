@@ -23,11 +23,20 @@ import {
   mintTestToken,
   type VirtualTime,
 } from 'tula-closeline-kit/testing'
+import { createSecretBoxVault } from '~/adapters/crypto/vault'
 import { createMemoryAudienceCheckStore } from '~/adapters/memory/audience-check-store'
 import { createMemoryBrandVoiceStore } from '~/adapters/memory/brand-voice-store'
 import { createMemoryCampaignStore } from '~/adapters/memory/campaign-store'
 import { createMemoryCore, type MemoryCore } from '~/adapters/memory/core'
 import { createMemoryEnrollmentStore } from '~/adapters/memory/enrollment-store'
+import {
+  createMemoryLinkedInProvider,
+  type MemoryLinkedInProvider,
+} from '~/adapters/memory/linkedin-provider'
+import {
+  createMemoryLinkedinStore,
+  type MemoryLinkedinStore,
+} from '~/adapters/memory/linkedin-store'
 import {
   createMemoryMailTransport,
   type MemoryMailTransport,
@@ -47,6 +56,7 @@ import { SERVICE } from '~/info'
 import { type OutboundDefinition, registry } from '~/messages'
 import { campaignHandlers } from '~/modules/campaign/audience'
 import { enrichmentHandlers } from '~/modules/enrichment/handlers'
+import type { LinkedinChannelDisabled } from '~/modules/linkedin/deps'
 import type { MailboxStateChanged } from '~/modules/mailbox/deps'
 
 /** The issuer and audience the test environment's tokens carry. */
@@ -73,8 +83,14 @@ export type TestDeps = Container & {
   mail: MemoryMailTransport
   /** The Outlook stand-in, same controls. */
   outlookMail: MemoryMailTransport
+  /** The LinkedIn provider stand-in: complete a hosted login, change an account's status, fail it. */
+  linkedinProvider: MemoryLinkedInProvider
+  /** The LinkedIn store in memory, to set the channel's state. */
+  linkedinStore: MemoryLinkedinStore
   /** Every `mailbox.state_changed` published, in order. */
   mailEvents: { organizationId: string; event: MailboxStateChanged }[]
+  /** The `linkedin.channel_disabled` events published, in order. */
+  linkedinEvents: { organizationId: string; event: LinkedinChannelDisabled }[]
   /** Every JSON log line written, in order. */
   logLines: string[]
   /** Every call to `reportError`, in order. */
@@ -133,13 +149,16 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
   const queue = createMemoryQueue({ registry, clock: time.clock, sleep: time.sleep })
   const processed = createMemoryProcessedStore({ clock: time.clock })
   const core = createMemoryCore()
-  const config = createMemoryProviderConfig()
+  const secretBox = createMemorySecretBox()
+  const vault = createSecretBoxVault(secretBox)
+  const config = createMemoryProviderConfig(vault)
   const store = createMemoryEnrichmentStore()
   const enrichment: Container['enrichment'] = {
     store,
     core: core.prospects,
     access: core.access,
     config,
+    vault,
     providers: overrides.providers ?? [],
     verifiers: overrides.verifiers ?? [],
     queue,
@@ -190,7 +209,7 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     store: createMemoryMailboxStore(),
     access: core.access,
     clock: time.clock,
-    secretBox: createMemorySecretBox(),
+    secretBox,
     transports: { gmail: mail, outlook: outlookMail },
     stateSecret: env.MAIL_STATE_SECRET,
     events: async (organizationId, event) => {
@@ -210,6 +229,20 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     organizationDailyCap: env.MAIL_ORG_DAILY_CAP,
   }
 
+  const linkedinEvents: TestDeps['linkedinEvents'] = []
+  const linkedinProvider = createMemoryLinkedInProvider(time.clock)
+  const linkedinStore = createMemoryLinkedinStore()
+  const linkedin: Container['linkedin'] = {
+    store: linkedinStore,
+    access: core.access,
+    clock: time.clock,
+    provider: linkedinProvider,
+    events: async (organizationId, event) => {
+      linkedinEvents.push({ organizationId, event })
+    },
+    logger,
+  }
+
   return {
     env,
     logger,
@@ -226,9 +259,13 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     brandVoice,
     mailboxes,
     send,
+    linkedin,
+    linkedinProvider,
+    linkedinStore,
     mail,
     outlookMail,
     mailEvents,
+    linkedinEvents,
     core,
     guard,
     config,

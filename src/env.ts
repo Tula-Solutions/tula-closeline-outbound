@@ -157,6 +157,14 @@ const schema = z
     ENRICHMENT_RETRY_BASE_MS: integer(1, 60_000).default(200),
     /** How long a run stays claimed by one worker before another may take it over, in seconds. */
     ENRICHMENT_RUN_LEASE_SECONDS: integer(5, 3_600).default(120),
+    /** Apollo's API origin (person and company data); a Fake in tests and local runs. */
+    APOLLO_BASE_URL: z.url().max(2_048).default('https://api.apollo.io'),
+    /** ZeroBounce's API origin (email verification). */
+    ZEROBOUNCE_BASE_URL: z.url().max(2_048).default('https://api.zerobounce.net'),
+    /** Consecutive failures after which a provider's circuit opens and its calls are skipped. */
+    PROVIDER_CIRCUIT_FAILURES: integer(1, 100).default(5),
+    /** How long an open circuit refuses calls before one trial call is allowed, in ms. */
+    PROVIDER_CIRCUIT_OPEN_MS: integer(100, 3_600_000).default(30_000),
 
     /** Core's origin for the enrichment read and write-back. Unset in `local` means in-memory core; required elsewhere. */
     CORE_URL: z.url().max(2_048).optional(),
