@@ -33,11 +33,20 @@ test('the app serves its OpenAPI document describing every route and the error b
     '/v1/enrichment-run-sets/{runSetId}',
     '/v1/enrichment-runs',
     '/v1/enrichment-runs/{runId}',
+    '/v1/fit-criteria',
+    '/v1/fit-criteria/{criterionId}',
+    '/v1/fit-scores',
     '/v1/mailboxes',
     '/v1/mailboxes/connect',
     '/v1/mailboxes/connect/complete',
     '/v1/mailboxes/{mailboxId}',
     '/v1/mailboxes/{mailboxId}/test-send',
+    '/v1/prospects/{prospectId}/fit',
+    '/v1/prospects/{prospectId}/signals',
+    '/v1/public/signals/webhook/{organizationId}',
+    '/v1/signal-settings',
+    '/v1/signal-webhook/rotate',
+    '/v1/signals/{signalId}',
   ])
   expect(document.paths['/healthz']?.get?.responses['500']).toBeDefined()
   expect(document.paths['/readyz']?.get?.responses['503']).toBeDefined()

@@ -35,6 +35,11 @@ export type CoreProspects = {
     organizationId: OrganizationId,
     prospectId: ProspectId
   ) => Promise<EnrichmentInput | null>
+  /** The id of the Organization's Prospect with this email address, or null; used by the Signal webhook, which has no user. */
+  findProspectIdByEmail: (
+    organizationId: OrganizationId,
+    email: string
+  ) => Promise<ProspectId | null>
   /** Writes fields with source `enrichment:<provider>`; idempotent on (Prospect, run id). Throws {@link CoreProspectNotFoundError} when core has no such Prospect. */
   writeEnrichedFields: (
     organizationId: OrganizationId,

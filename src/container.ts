@@ -27,8 +27,10 @@ import { createMemoryMailTransport } from '~/adapters/memory/mail-transport'
 import { createMemorySecretBox } from '~/adapters/memory/secret-box'
 import { createPostgresBrandVoiceStore } from '~/adapters/postgres/brand-voice-store'
 import { createPostgresCampaignStore } from '~/adapters/postgres/campaign-store'
+import { createPostgresFitStore } from '~/adapters/postgres/fit-store'
 import { createPostgresMailboxStore } from '~/adapters/postgres/mailbox-store'
 import { createPostgresProviderConfig } from '~/adapters/postgres/provider-config'
+import { createPostgresSignalStore } from '~/adapters/postgres/signal-store'
 import { createPostgresEnrichmentStore } from '~/adapters/postgres/store'
 import { createOutboundConsumer } from '~/consumer'
 import { describeError } from '~/describe-error'
@@ -39,7 +41,9 @@ import type { BrandVoiceDeps } from '~/modules/brand-voice/deps'
 import type { CampaignDeps } from '~/modules/campaign/deps'
 import type { EnrichmentDeps } from '~/modules/enrichment/deps'
 import { enrichmentHandlers } from '~/modules/enrichment/handlers'
+import type { FitDeps } from '~/modules/fit/deps'
 import type { MailboxDeps } from '~/modules/mailbox/deps'
+import type { SignalDeps } from '~/modules/signal/deps'
 import type { CredentialVault } from '~/ports/provider-config'
 import { trackerSafe } from '~/tracker-safe'
 
@@ -84,6 +88,10 @@ export type Container = {
   brandVoice: BrandVoiceDeps
   /** Everything the mailbox module needs; its service functions take this first. */
   mailboxes: MailboxDeps
+  /** Everything the signal module needs; its service functions take this first. */
+  signals: SignalDeps
+  /** Everything the fit module needs; its service functions take this first. */
+  fit: FitDeps
   /** The queue consumer; built here, started by `server.ts` and stopped on shutdown. */
   consumer: Consumer
   /** Probes run by `/readyz`: the database. */
@@ -231,16 +239,37 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     access: core.access,
     clock: systemClock,
   }
+  const secretBox =
+    env.MAIL_SECRET_BOX_KEY !== undefined
+      ? createLocalKeySecretBox(env.MAIL_SECRET_BOX_KEY)
+      : env.ENVIRONMENT === 'local'
+        ? createMemorySecretBox()
+        : createUnconfiguredSecretBox()
+  // There is no event bus in this service yet; Signal and fit events are logged (ids and numbers only).
+  const signalEvents: SignalDeps['events'] = async (organizationId, event) => {
+    logger.info(event.name, { organizationId, ...event.payload })
+  }
+  const prospectsCore = coreHttp ?? core.prospects
+  const signals: SignalDeps = {
+    store: createPostgresSignalStore(inOrganization),
+    core: prospectsCore,
+    access: core.access,
+    secretBox,
+    clock: systemClock,
+    events: signalEvents,
+  }
+  const fit: FitDeps = {
+    store: createPostgresFitStore(inOrganization),
+    core: prospectsCore,
+    access: core.access,
+    clock: systemClock,
+    events: signalEvents,
+  }
   const mailboxes: MailboxDeps = {
     store: createPostgresMailboxStore(inOrganization),
     access: core.access,
     clock: systemClock,
-    secretBox:
-      env.MAIL_SECRET_BOX_KEY !== undefined
-        ? createLocalKeySecretBox(env.MAIL_SECRET_BOX_KEY)
-        : env.ENVIRONMENT === 'local'
-          ? createMemorySecretBox()
-          : createUnconfiguredSecretBox(),
+    secretBox,
     transports: {
       gmail:
         env.GOOGLE_CLIENT_ID !== undefined && env.GOOGLE_CLIENT_SECRET !== undefined
@@ -316,6 +345,8 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     campaigns,
     brandVoice,
     mailboxes,
+    signals,
+    fit,
     consumer,
     readinessChecks: [
       {

@@ -24,6 +24,7 @@ import {
 import { createMemoryBrandVoiceStore } from '~/adapters/memory/brand-voice-store'
 import { createMemoryCampaignStore } from '~/adapters/memory/campaign-store'
 import { createMemoryCore, type MemoryCore } from '~/adapters/memory/core'
+import { createMemoryFitStore } from '~/adapters/memory/fit-store'
 import {
   createMemoryMailTransport,
   type MemoryMailTransport,
@@ -32,6 +33,7 @@ import { createMemoryMailboxStore } from '~/adapters/memory/mailbox-store'
 import { createMemoryProviderConfig } from '~/adapters/memory/provider-config'
 import type { MemoryProvider, MemoryVerifier } from '~/adapters/memory/providers'
 import { createMemorySecretBox } from '~/adapters/memory/secret-box'
+import { createMemorySignalStore } from '~/adapters/memory/signal-store'
 import { createMemoryEnrichmentStore } from '~/adapters/memory/store'
 import { createApp } from '~/app'
 import { createOutboundConsumer } from '~/consumer'
@@ -42,6 +44,7 @@ import { SERVICE } from '~/info'
 import { type OutboundDefinition, registry } from '~/messages'
 import { enrichmentHandlers } from '~/modules/enrichment/handlers'
 import type { MailboxStateChanged } from '~/modules/mailbox/deps'
+import type { SignalDeps, SignalEvent } from '~/modules/signal/deps'
 
 /** The issuer and audience the test environment's tokens carry. */
 const TEST_ISSUER = 'https://auth.test'
@@ -67,6 +70,8 @@ export type TestDeps = Container & {
   outlookMail: MemoryMailTransport
   /** Every `mailbox.state_changed` published, in order. */
   mailEvents: { organizationId: string; event: MailboxStateChanged }[]
+  /** Every `signal.recorded` and `prospect.fit_changed` published, in order. */
+  signalEvents: { organizationId: string; event: SignalEvent }[]
   /** Every JSON log line written, in order. */
   logLines: string[]
   /** Every call to `reportError`, in order. */
@@ -170,6 +175,25 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     provider: 'outlook',
   })
   const mailEvents: TestDeps['mailEvents'] = []
+  const signalEvents: TestDeps['signalEvents'] = []
+  const publishSignal: SignalDeps['events'] = async (organizationId, event) => {
+    signalEvents.push({ organizationId, event })
+  }
+  const signals: Container['signals'] = {
+    store: createMemorySignalStore(),
+    core: core.prospects,
+    access: core.access,
+    secretBox: createMemorySecretBox(),
+    clock: time.clock,
+    events: publishSignal,
+  }
+  const fit: Container['fit'] = {
+    store: createMemoryFitStore(),
+    core: core.prospects,
+    access: core.access,
+    clock: time.clock,
+    events: publishSignal,
+  }
   const mailboxes: Container['mailboxes'] = {
     store: createMemoryMailboxStore(),
     access: core.access,
@@ -198,6 +222,9 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     campaigns,
     brandVoice,
     mailboxes,
+    signals,
+    fit,
+    signalEvents,
     mail,
     outlookMail,
     mailEvents,

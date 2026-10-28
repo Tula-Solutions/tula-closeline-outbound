@@ -123,6 +123,17 @@ export function createMemoryCore(): MemoryCore {
         const found = find(organizationId, prospectId)
         return found === undefined ? null : { prospectId, values: { ...found.values } }
       },
+      async findProspectIdByEmail(organizationId, email) {
+        for (const [entry, found] of prospects) {
+          if (
+            entry.startsWith(`${organizationId}|`) &&
+            found.values.email?.toLowerCase() === email.toLowerCase()
+          ) {
+            return entry.slice(organizationId.length + 1) as ProspectId
+          }
+        }
+        return null
+      },
       async writeEnrichedFields(organizationId, prospectId, write) {
         writes += 1
         const found = find(organizationId, prospectId)

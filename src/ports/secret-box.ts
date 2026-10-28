@@ -10,11 +10,13 @@ export const MAX_SEALED_SECRET_BYTES = 8192
  * What a sealed value is bound to. It is authenticated with the ciphertext but never stored with
  * it, so a sealed token copied to another Mailbox, Organization or purpose does not open.
  */
-export type SecretContext = {
-  organizationId: OrganizationId
-  mailboxId: MailboxId
-  purpose: 'access_token' | 'refresh_token'
-}
+export type SecretContext =
+  | {
+      organizationId: OrganizationId
+      mailboxId: MailboxId
+      purpose: 'access_token' | 'refresh_token'
+    }
+  | { organizationId: OrganizationId; purpose: 'signal_webhook_secret' }
 
 /** A value after sealing: which key sealed it, and the opaque bytes to store. */
 export type SealedSecret = {
