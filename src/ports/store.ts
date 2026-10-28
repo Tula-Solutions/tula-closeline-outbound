@@ -179,4 +179,19 @@ export type EnrichmentStore = {
   listRuns: (organizationId: OrganizationId, filter: RunFilter) => Promise<RunPage>
   /** What the Organization has spent on providers in the month (`YYYY-MM-01`), holds included, in micro-dollars. */
   monthSpend: (organizationId: OrganizationId, month: string) => Promise<number>
+  /** A page of recorded spend, newest month first then provider; `month` is `YYYY-MM-01`. */
+  listSpend: (organizationId: OrganizationId, filter: SpendFilter) => Promise<SpendPage>
 }
+
+/** One provider's recorded spend in one month (`YYYY-MM-01`). */
+export type SpendRow = { month: string; provider: ProviderKey; costMicros: number; calls: number }
+
+/** Which spend to list: an optional month, the key after which the page starts, and its size. */
+export type SpendFilter = {
+  month?: string | undefined
+  after?: { month: string; provider: string } | undefined
+  limit: number
+}
+
+/** A page of spend and the key to continue from, or null at the end. */
+export type SpendPage = { items: SpendRow[]; next: { month: string; provider: string } | null }

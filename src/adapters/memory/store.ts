@@ -18,6 +18,7 @@ import {
   type Provenance,
   type RunFilter,
   type RunPage,
+  type SpendRow,
   type StoredVerification,
 } from '~/ports/store'
 
@@ -349,6 +350,35 @@ export function createMemoryEnrichmentStore(): EnrichmentStore & {
 
     async monthSpend(organizationId, month) {
       return total(organizationId, month)
+    },
+
+    async listSpend(organizationId, filter) {
+      const all: SpendRow[] = []
+      for (const [key, byProvider] of spend) {
+        const [org, month] = key.split('|') as [string, string]
+        if (org !== organizationId || (filter.month !== undefined && month !== filter.month)) {
+          continue
+        }
+        for (const [provider, entry] of byProvider) {
+          all.push({ month, provider, ...entry })
+        }
+      }
+      all.sort((a, b) => b.month.localeCompare(a.month) || a.provider.localeCompare(b.provider))
+      const after = filter.after
+      const rest = after
+        ? all.filter(
+            (r) => r.month < after.month || (r.month === after.month && r.provider > after.provider)
+          )
+        : all
+      const items = rest.slice(0, filter.limit)
+      const last = items.at(-1)
+      return {
+        items,
+        next:
+          rest.length > items.length && last !== undefined
+            ? { month: last.month, provider: last.provider }
+            : null,
+      }
     },
   }
 }

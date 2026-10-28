@@ -183,6 +183,35 @@ describe('the Postgres enrichment store', () => {
     expect(await store.monthSpend(org, '2026-04-01')).toBe(0)
   })
 
+  test('spend lists newest month first then provider, pages by key, and stays in the Organization', async () => {
+    const org = newOrganizationId()
+    const other = newOrganizationId()
+    for (const [o, month, provider] of [
+      [org, '2026-02-01', 'alpha'],
+      [org, '2026-03-01', 'beta'],
+      [org, '2026-03-01', 'alpha'],
+      [other, '2026-03-01', 'alpha'],
+    ] as const) {
+      await withOrganization(database.db, o, (tx) =>
+        tx
+          .insert(enrichmentSpend)
+          .values({ organizationId: o, month, provider, costMicros: 5, calls: 1 })
+      )
+    }
+
+    const first = await store.listSpend(org, { limit: 2 })
+    const second = await store.listSpend(org, { limit: 2, after: first.next ?? undefined })
+    const march = await store.listSpend(org, { limit: 10, month: '2026-03-01' })
+
+    expect(first.items.map((r) => `${r.month}/${r.provider}`)).toEqual([
+      '2026-03-01/alpha',
+      '2026-03-01/beta',
+    ])
+    expect(second.items.map((r) => `${r.month}/${r.provider}`)).toEqual(['2026-02-01/alpha'])
+    expect(second.next).toBeNull()
+    expect(march.items).toHaveLength(2)
+  })
+
   test('renewing keeps the lease token and the start time, and moves only the heartbeat', async () => {
     const org = newOrganizationId()
     const { run, lease } = await claimedRun(org, 'req-heartbeat')

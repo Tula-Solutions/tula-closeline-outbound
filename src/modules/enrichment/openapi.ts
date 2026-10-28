@@ -11,6 +11,8 @@ export type EnrichmentRouteName =
   | 'setEnrichmentProvider'
   | 'getEnrichmentWaterfall'
   | 'setEnrichmentWaterfall'
+  | 'getEnrichmentBudget'
+  | 'listEnrichmentSpend'
 
 const ALL_ERRORS: Record<string, { code: string; status: number }> = {
   ...ERRORS,
