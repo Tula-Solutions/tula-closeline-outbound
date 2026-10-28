@@ -139,6 +139,8 @@ const schema = z
     QUEUE_ENDPOINT: z.url().max(2_048).optional(),
     /** Messages the queue consumer handles at once. */
     CONSUMER_CONCURRENCY: integer(1, 100).default(4),
+    /** Turns the Sequence engine sweep on; off until its Draft, approvals and contact sources are real. */
+    ENGINE_ENABLED: z.enum(['true', 'false']).default('false'),
     /** How often the Sequence engine looks for due Steps, in ms; 0 turns the sweep off. */
     ENGINE_SWEEP_INTERVAL_MS: integer(0, 3_600_000).default(30_000),
     /** Organizations one engine sweep page looks at. */
@@ -173,6 +175,29 @@ const schema = z
     PROVIDER_CIRCUIT_FAILURES: integer(1, 100).default(5),
     /** How long an open circuit refuses calls before one trial call is allowed, in ms. */
     PROVIDER_CIRCUIT_OPEN_MS: integer(100, 3_600_000).default(30_000),
+
+    /** Anthropic's API key (platform-wide). Unset means no model outside `local`. Never log it. */
+    ANTHROPIC_API_KEY: z.string().min(1).max(512).optional(),
+    ANTHROPIC_BASE_URL: z.url().max(2_048).default('https://api.anthropic.com'),
+    /** The model id every call asks for. */
+    ANTHROPIC_MODEL: z.string().min(1).max(100).default('claude-sonnet-5-5'),
+    /** Operator confirmation that the Anthropic account is set not to train on our traffic; the model refuses to start without it. */
+    ANTHROPIC_NO_TRAINING_CONFIRMED: z.enum(['true', 'false']).default('false'),
+    /** The most one Organization may spend on the model in a UTC month, in micro-dollars. Default 50 USD. */
+    MODEL_MONTHLY_BUDGET_MICROS: integer(0, 1_000_000_000_000).default(50_000_000),
+    /** Micro-dollars per million input tokens (default 3 USD). */
+    MODEL_INPUT_MICROS_PER_MILLION: integer(0, 1_000_000_000).default(3_000_000),
+    /** Micro-dollars per million output tokens (default 15 USD). */
+    MODEL_OUTPUT_MICROS_PER_MILLION: integer(0, 1_000_000_000).default(15_000_000),
+    /** Exa's API key. Unset means no web search outside `local`. Never log it. */
+    EXA_API_KEY: z.string().min(1).max(512).optional(),
+    EXA_BASE_URL: z.url().max(2_048).default('https://api.exa.ai'),
+    /** The longest one model or web search try may take, in ms. */
+    AI_CALL_TIMEOUT_MS: integer(100, 120_000).default(20_000),
+    /** The most tries of one model or web search call (the first included). */
+    AI_CALL_MAX_TRIES: integer(1, 5).default(2),
+    /** The first retry delay before jitter, in ms; it doubles per try. */
+    AI_RETRY_BASE_MS: integer(1, 60_000).default(200),
 
     /** Core's origin for the enrichment read and write-back. Unset in `local` means in-memory core; required elsewhere. */
     CORE_URL: z.url().max(2_048).optional(),

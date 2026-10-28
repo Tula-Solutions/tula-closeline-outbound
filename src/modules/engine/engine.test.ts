@@ -216,4 +216,38 @@ describe('engine', () => {
     expect(Date.parse(held.nextDueAt ?? '')).toBe(w.t.deps.clock.now().getTime() + RETRY_MS)
     expect(w.sent()).toBe(0)
   })
+
+  test('a sweep starts at a random place and wraps, so a backlog cannot starve later Organizations', async () => {
+    const w = await world()
+    const ids = Array.from(
+      { length: 12 },
+      (_, i) => `org_${(i + 1).toString(16).padStart(8, '0')}${'0'.repeat(24)}`
+    )
+    const claimed: string[] = []
+    const enrollments = {
+      ...w.t.deps.engine.enrollments,
+      dueOrganizations: async (after: string | null, batch: number) => {
+        const rest = ids.filter((id) => after === null || id > after)
+        const page = rest.slice(0, batch)
+        return {
+          organizationIds: page as OrganizationId[],
+          next: rest.length > batch ? (page[page.length - 1] ?? null) : null,
+        }
+      },
+      claimDue: async (organizationId: OrganizationId) => {
+        claimed.push(organizationId)
+        return []
+      },
+    }
+    // Lands after the 8th Organization: 9..12 first, then the walk wraps to 1.. for the rest of the pages.
+    const random = () => 8 / 2 ** 32
+    await sweep({
+      ...w.t.deps.engine,
+      enrollments,
+      random,
+      limits: { orgBatch: 1, stepPage: 1, leaseSeconds: 600 },
+    })
+    expect(claimed).toContain(ids[11] as string)
+    expect(claimed).toContain(ids[0] as string)
+  })
 })

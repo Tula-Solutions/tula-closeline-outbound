@@ -17,6 +17,8 @@ export type EngineDeps = {
   /** Carries one `enrollment.step` message per due Enrollment. */
   queue: Queue<OutboundEnvelope>
   clock: Clock
+  /** Where a sweep starts walking the Organizations, so a backlog cannot starve later ones. */
+  random: () => number
   logger: Logger
   limits: {
     /** Organizations one page of the sweep looks at. */

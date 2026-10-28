@@ -68,7 +68,14 @@ export async function sweep(deps: EngineDeps): Promise<number> {
   const now = deps.clock.now()
   const lease = new Date(now.getTime() + deps.limits.leaseSeconds * 1000)
   let queued = 0
-  let after: string | null = null
+  // Starting at a random Organization and wrapping to the beginning gives every Organization a
+  // turn over time; a fixed start would let a backlog in the first pages starve the rest.
+  // shortcut: random, not a stored cursor, so some Organizations are visited twice in a tick
+  // (the lease makes that harmless); a persisted cursor needs a db table, add it if skew shows.
+  let after: string | null = `org_${Math.floor(deps.random() * 2 ** 32)
+    .toString(16)
+    .padStart(8, '0')}${'0'.repeat(24)}`
+  let wrapped = false
   for (let page = 0; page < MAX_ORG_PAGES; page++) {
     const orgs = await deps.enrollments.dueOrganizations(
       after,
@@ -112,7 +119,10 @@ export async function sweep(deps: EngineDeps): Promise<number> {
     }
     after = orgs.next
     if (after === null) {
-      break
+      if (wrapped) {
+        break
+      }
+      wrapped = true
     }
   }
   return queued

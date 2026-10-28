@@ -24,7 +24,7 @@ container.consumer.start()
 // The engine sweep: one tick at a time, never overlapping, errors reported not thrown.
 let sweeping = false
 const sweepTimer =
-  container.env.ENGINE_SWEEP_INTERVAL_MS === 0
+  container.env.ENGINE_ENABLED !== 'true' || container.env.ENGINE_SWEEP_INTERVAL_MS === 0
     ? undefined
     : setInterval(() => {
         if (sweeping || container.lifecycle.draining) {

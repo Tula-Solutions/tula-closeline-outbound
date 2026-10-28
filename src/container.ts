@@ -19,8 +19,10 @@ import {
 } from 'tula-closeline-kit'
 import { type Consumer, createSqsQueue } from 'tula-closeline-kit/queue'
 import { createMemoryContactGuard, createMemoryQueue } from 'tula-closeline-kit/testing'
+import { createAnthropicModel } from '~/adapters/anthropic/model'
 import { createLocalKeySecretBox, createUnconfiguredSecretBox } from '~/adapters/crypto/secret-box'
 import { createSecretBoxVault } from '~/adapters/crypto/vault'
+import { createExaWebSearch } from '~/adapters/exa/web-search'
 import { createGmailMailTransport } from '~/adapters/gmail/mail-transport'
 import { createGraphMailTransport } from '~/adapters/graph/mail-transport'
 import { createHttpCoreProspects } from '~/adapters/http/core'
@@ -33,13 +35,16 @@ import {
 } from '~/adapters/memory/engine'
 import { createMemoryLinkedInProvider } from '~/adapters/memory/linkedin-provider'
 import { createMemoryMailTransport } from '~/adapters/memory/mail-transport'
+import { createMemoryModel } from '~/adapters/memory/model'
 import { createMemorySecretBox } from '~/adapters/memory/secret-box'
+import { createMemoryWebSearch } from '~/adapters/memory/web-search'
 import { createPostgresBrandVoiceStore } from '~/adapters/postgres/brand-voice-store'
 import { createPostgresCampaignStore } from '~/adapters/postgres/campaign-store'
 import { createPostgresEnrollmentStore } from '~/adapters/postgres/enrollment-store'
 import { createPostgresFitStore } from '~/adapters/postgres/fit-store'
 import { createPostgresLinkedinStore } from '~/adapters/postgres/linkedin-store'
 import { createPostgresMailboxStore } from '~/adapters/postgres/mailbox-store'
+import { createPostgresModelUsageStore } from '~/adapters/postgres/model-usage'
 import { createPostgresProviderConfig } from '~/adapters/postgres/provider-config'
 import { createPostgresSendStore } from '~/adapters/postgres/send-store'
 import { createPostgresSignalStore } from '~/adapters/postgres/signal-store'
@@ -64,6 +69,8 @@ import { defaultSendSettings, type LinkedinDeps } from '~/modules/linkedin/deps'
 import type { MailboxDeps } from '~/modules/mailbox/deps'
 import type { SendDeps } from '~/modules/send/deps'
 import type { SignalDeps } from '~/modules/signal/deps'
+import type { Model } from '~/ports/model'
+import type { WebSearch } from '~/ports/web-search'
 import { trackerSafe } from '~/tracker-safe'
 
 /** One dependency probe for `/readyz`: resolve when healthy, reject or stall when not. */
@@ -117,6 +124,8 @@ export type Container = {
   linkedin: LinkedinDeps
   /** Everything the Sequence engine needs; `server.ts` runs its sweep on a timer. */
   engine: EngineDeps
+  /** The model and web search: the real vendors when their keys are set, memory stand-ins when `local`, otherwise null. */
+  ai: { model: Model | null; web: WebSearch | null }
   /** The queue consumer; built here, started by `server.ts` and stopped on shutdown. */
   consumer: Consumer
   /** Probes run by `/readyz`: the database. */
@@ -407,12 +416,51 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     contacts: createMemoryProspectContacts(),
     queue,
     clock: systemClock,
+    random: Math.random,
     logger,
     limits: {
       orgBatch: env.ENGINE_ORG_BATCH,
       stepPage: env.ENGINE_STEP_PAGE,
       leaseSeconds: env.ENGINE_LEASE_SECONDS,
     },
+  }
+  const local = env.ENVIRONMENT === 'local'
+  const aiBounds = {
+    timeoutMs: env.AI_CALL_TIMEOUT_MS,
+    maxTries: env.AI_CALL_MAX_TRIES,
+    retryBaseMs: env.AI_RETRY_BASE_MS,
+    sleep: systemSleep,
+    random: Math.random,
+  }
+  const ai: Container['ai'] = {
+    model:
+      env.ANTHROPIC_API_KEY !== undefined
+        ? createAnthropicModel({
+            ...aiBounds,
+            apiKey: env.ANTHROPIC_API_KEY,
+            baseUrl: env.ANTHROPIC_BASE_URL,
+            model: env.ANTHROPIC_MODEL,
+            noTraining: env.ANTHROPIC_NO_TRAINING_CONFIRMED === 'true',
+            usage: createPostgresModelUsageStore(inOrganization),
+            monthlyBudgetMicros: env.MODEL_MONTHLY_BUDGET_MICROS,
+            inputMicrosPerMillion: env.MODEL_INPUT_MICROS_PER_MILLION,
+            outputMicrosPerMillion: env.MODEL_OUTPUT_MICROS_PER_MILLION,
+            now: () => new Date(systemClock.now()),
+          })
+        : local
+          ? createMemoryModel()
+          : null,
+    web:
+      env.EXA_API_KEY !== undefined
+        ? createExaWebSearch({
+            ...aiBounds,
+            apiKey: env.EXA_API_KEY,
+            baseUrl: env.EXA_BASE_URL,
+            now: () => new Date(systemClock.now()),
+          })
+        : local
+          ? createMemoryWebSearch()
+          : null,
   }
   const consumer = createOutboundConsumer({
     queue,
@@ -449,6 +497,7 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     send,
     linkedin,
     engine,
+    ai,
     consumer,
     readinessChecks: [
       {
