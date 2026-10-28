@@ -43,12 +43,14 @@ import {
   type MemoryMailTransport,
 } from '~/adapters/memory/mail-transport'
 import { createMemoryMailboxStore } from '~/adapters/memory/mailbox-store'
+import { createMemoryModel } from '~/adapters/memory/model'
 import { createMemoryProviderConfig } from '~/adapters/memory/provider-config'
 import type { MemoryProvider, MemoryVerifier } from '~/adapters/memory/providers'
 import { createMemorySecretBox } from '~/adapters/memory/secret-box'
 import { createMemorySendStore } from '~/adapters/memory/send-store'
 import { createMemorySignalStore } from '~/adapters/memory/signal-store'
 import { createMemoryEnrichmentStore } from '~/adapters/memory/store'
+import { createMemoryWebSearch } from '~/adapters/memory/web-search'
 import { createApp } from '~/app'
 import { createOutboundConsumer } from '~/consumer'
 import type { Container, ErrorContext, ReadinessCheck } from '~/container'
@@ -300,6 +302,7 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     signalEvents,
     send,
     linkedin,
+    ai: { model: createMemoryModel(), web: createMemoryWebSearch() },
     linkedinProvider,
     linkedinStore,
     mail,
