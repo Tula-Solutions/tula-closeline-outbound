@@ -8,7 +8,7 @@ import {
   type TestApp,
   type TestIdentity,
 } from '~/testing'
-import { completeConnection } from './service'
+import { assertChannelOpen, completeConnection } from './service'
 
 type Reply = { status: number; body: Record<string, unknown> }
 
@@ -38,11 +38,17 @@ async function world() {
     method: string,
     path: string,
     as: TestIdentity,
-    key: string = crypto.randomUUID()
+    key: string = crypto.randomUUID(),
+    body?: unknown
   ): Promise<Reply> => {
     const response = await t.app.request(path, {
       method,
-      headers: { ...(await t.bearer(as)), 'idempotency-key': key },
+      headers: {
+        ...(await t.bearer(as)),
+        'idempotency-key': key,
+        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     })
     const text = await response.text()
     return { status: response.status, body: text === '' ? {} : JSON.parse(text) }
@@ -185,5 +191,164 @@ describe('linkedin accounts', () => {
     w.t.deps.linkedinProvider.setDown(true)
     await w.call('DELETE', `/v1/linkedin/accounts/${account.id}`, w.rep)
     expect(w.t.deps.logLines.join('\n')).not.toContain(ref)
+  })
+})
+
+describe('linkedin risk acceptance and the channel switch', () => {
+  const accept = (w: Awaited<ReturnType<typeof world>>, as: TestIdentity, name = 'Ada Admin') =>
+    w.call('POST', '/v1/linkedin/risk-acceptance', as, undefined, {
+      wordingVersion: LINKEDIN_RISK_WORDING_VERSION,
+      typedFullName: name,
+    })
+  const fresh = async () => {
+    const w = await world()
+    // The shared world starts open; these tests start from a closed channel.
+    w.t.deps.linkedinStore.setChannel(w.org, { enabled: false, acceptedVersions: [] })
+    return w
+  }
+  const patch = (w: Awaited<ReturnType<typeof world>>, as: TestIdentity, enabled: boolean) =>
+    w.call('PATCH', '/v1/linkedin/settings', as, undefined, { enabled })
+
+  test('every role reads the statement; only Owner and Admin accept', async () => {
+    const w = await fresh()
+    const read = await w.call('GET', '/v1/linkedin/risk-statement', w.rep)
+    expect(read.body.version).toBe(LINKEDIN_RISK_WORDING_VERSION)
+    expect(typeof read.body.text).toBe('string')
+    for (const who of [w.rep, w.manager]) {
+      expect((await accept(w, who)).status).toBe(403)
+    }
+    const done = await accept(w, w.admin)
+    expect(done.status).toBe(201)
+    expect(done.body.typedFullName).toBe('Ada Admin')
+    expect(done.body.revokedAt).toBeNull()
+    expect(typeof done.body.acceptedByMembershipId).toBe('string')
+    expect((await accept(w, w.owner, 'Olive Owner')).status).toBe(201)
+  })
+
+  test('accepting needs the current wording and a real name', async () => {
+    const w = await fresh()
+    const old = await w.call('POST', '/v1/linkedin/risk-acceptance', w.admin, undefined, {
+      wordingVersion: '2020-1-1',
+      typedFullName: 'Ada Admin',
+    })
+    expect(old.status).toBe(400)
+    expect((await accept(w, w.admin, 'A')).status).toBe(400)
+  })
+
+  test('accepting again returns the same acceptance', async () => {
+    const w = await fresh()
+    const first = await accept(w, w.admin)
+    const second = await accept(w, w.admin)
+    expect(second.body.id).toBe(first.body.id)
+    const list = await w.call('GET', '/v1/linkedin/risk-acceptances', w.admin)
+    expect((list.body.items as unknown[]).length).toBe(1)
+  })
+
+  test('the switch needs an acceptance, and the settings tell the truth', async () => {
+    const w = await fresh()
+    const refused = await patch(w, w.admin, true)
+    expect(refused.status).toBe(409)
+    expect(codeOf(refused.body)).toBe('linkedin.risk_not_accepted')
+    expect((await patch(w, w.rep, false)).status).toBe(403)
+    await accept(w, w.admin)
+    const on = await patch(w, w.admin, true)
+    expect(on.status).toBe(200)
+    expect(on.body).toMatchObject({
+      enabled: true,
+      effectivelyEnabled: true,
+      currentWordingVersion: LINKEDIN_RISK_WORDING_VERSION,
+    })
+    expect(typeof on.body.acceptedAt).toBe('string')
+    expect((await w.call('GET', '/v1/linkedin/settings', w.rep)).body.effectivelyEnabled).toBe(true)
+  })
+
+  test('an acceptance of an older wording does not open the channel', async () => {
+    const w = await fresh()
+    w.t.deps.linkedinStore.setChannel(w.org, { enabled: true, acceptedVersions: ['older'] })
+    const settings = await w.call('GET', '/v1/linkedin/settings', w.admin)
+    expect(settings.body).toMatchObject({
+      enabled: true,
+      acceptedAt: null,
+      effectivelyEnabled: false,
+    })
+    await expect(assertChannelOpen(w.t.deps.linkedin, w.org)).rejects.toMatchObject({
+      code: 'linkedin.risk_not_accepted',
+    })
+  })
+
+  test('revoking stops LinkedIn at the next check, publishes once, and leaves the rest alone', async () => {
+    const w = await fresh()
+    await accept(w, w.admin)
+    await patch(w, w.admin, true)
+    await expect(assertChannelOpen(w.t.deps.linkedin, w.org)).resolves.toBeUndefined()
+    expect((await w.call('DELETE', '/v1/linkedin/risk-acceptance', w.rep)).status).toBe(403)
+    expect((await w.call('DELETE', '/v1/linkedin/risk-acceptance', w.admin)).status).toBe(204)
+    await expect(assertChannelOpen(w.t.deps.linkedin, w.org)).rejects.toMatchObject({
+      code: 'linkedin.risk_not_accepted',
+    })
+    const start = await w.call('POST', '/v1/linkedin/accounts/connection', w.rep)
+    expect(codeOf(start.body)).toBe('linkedin.risk_not_accepted')
+    // Revoking again is a no-op and publishes nothing more.
+    expect((await w.call('DELETE', '/v1/linkedin/risk-acceptance', w.admin)).status).toBe(204)
+    expect(w.t.deps.linkedinEvents.map((e) => e.event.reason)).toEqual(['acceptance_revoked'])
+    expect(w.t.deps.linkedinEvents[0]?.organizationId).toBe(w.org)
+    // The history keeps the revoked row.
+    const list = await w.call('GET', '/v1/linkedin/risk-acceptances', w.owner)
+    expect((list.body.items as { revokedAt: string | null }[])[0]?.revokedAt).not.toBeNull()
+    // Email is another channel and never asks the LinkedIn check: its routes still answer.
+    expect((await w.call('GET', '/v1/mailboxes', w.admin)).status).toBe(200)
+  })
+
+  test('switching off stops LinkedIn, publishes once, and a repeat does not publish', async () => {
+    const w = await fresh()
+    await accept(w, w.admin)
+    await patch(w, w.admin, true)
+    const off = await patch(w, w.admin, false)
+    expect(off.body.effectivelyEnabled).toBe(false)
+    await patch(w, w.admin, false)
+    await expect(assertChannelOpen(w.t.deps.linkedin, w.org)).rejects.toMatchObject({
+      code: 'linkedin.channel_disabled',
+    })
+    expect(w.t.deps.linkedinEvents.map((e) => e.event.reason)).toEqual(['admin_switch'])
+  })
+
+  test('the history is paged, shows who and when, and only Owner and Admin read it', async () => {
+    const w = await fresh()
+    await accept(w, w.admin)
+    await w.call('DELETE', '/v1/linkedin/risk-acceptance', w.admin)
+    w.t.deps.clock.advance('1s')
+    await accept(w, w.owner, 'Olive Owner')
+    expect((await w.call('GET', '/v1/linkedin/risk-acceptances', w.manager)).status).toBe(403)
+    const first = await w.call('GET', '/v1/linkedin/risk-acceptances?limit=1', w.admin)
+    expect((first.body.items as { typedFullName: string }[])[0]?.typedFullName).toBe('Olive Owner')
+    const second = await w.call(
+      'GET',
+      `/v1/linkedin/risk-acceptances?limit=1&cursor=${first.body.nextCursor}`,
+      w.admin
+    )
+    expect((second.body.items as { typedFullName: string }[])[0]?.typedFullName).toBe('Ada Admin')
+    expect(second.body.nextCursor).toBeNull()
+    const bad = await w.call('GET', '/v1/linkedin/risk-acceptances?cursor=nonsense', w.admin)
+    expect(bad.status).toBe(400)
+  })
+
+  test('a second Organization cannot see or use the acceptance', async () => {
+    const w = await fresh()
+    await accept(w, w.admin)
+    await patch(w, w.admin, true)
+    const other = newOrganizationId()
+    const theirAdmin: TestIdentity = { userId: newUserId(), organizationId: other, role: 'admin' }
+    const theirs = await w.call('GET', '/v1/linkedin/settings', theirAdmin)
+    expect(theirs.body).toMatchObject({
+      enabled: false,
+      acceptedAt: null,
+      effectivelyEnabled: false,
+    })
+    const theirList = await w.call('GET', '/v1/linkedin/risk-acceptances', theirAdmin)
+    expect(theirList.body.items).toEqual([])
+    await expect(assertChannelOpen(w.t.deps.linkedin, other)).rejects.toBeDefined()
+    // Revoking in the other Organization leaves the first one open.
+    await w.call('DELETE', '/v1/linkedin/risk-acceptance', theirAdmin)
+    await expect(assertChannelOpen(w.t.deps.linkedin, w.org)).resolves.toBeUndefined()
   })
 })

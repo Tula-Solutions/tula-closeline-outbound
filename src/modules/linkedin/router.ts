@@ -1,13 +1,20 @@
 import { createRoute, type OpenAPIHono } from '@hono/zod-openapi'
 import type { MiddlewareHandler } from 'hono'
 import {
+  acceptLinkedinRiskRequestSchema,
   ERRORS,
   linkedinAccountIdSchema,
   linkedinAccountPageSchema,
   linkedinAccountSchema,
+  linkedinRiskAcceptancePageSchema,
+  linkedinRiskAcceptanceSchema,
+  linkedinRiskStatementSchema,
+  linkedinSettingsSchema,
   listLinkedinAccountsQuerySchema,
+  listLinkedinRiskAcceptancesQuerySchema,
   startLinkedinConnectionRequestSchema,
   startLinkedinConnectionResponseSchema,
+  updateLinkedinSettingsRequestSchema,
 } from 'tula-closeline-contract'
 import { z } from 'zod'
 import { type AuthedEnv, callerOf } from '~/http/auth'
@@ -100,6 +107,112 @@ const disconnectRoute = createRoute({
   },
 })
 
+const statementRoute = createRoute({
+  ...contractRoute('getRiskStatement'),
+  middleware: requireRoles('getRiskStatement'),
+  tags: ['linkedin'],
+  summary: 'Read the current LinkedIn risk statement',
+  security: [{ [PUBLIC_SECURITY]: [] }],
+  responses: {
+    200: {
+      description: 'The statement and its wording version.',
+      content: { 'application/json': { schema: linkedinRiskStatementSchema } },
+    },
+    ...failureResponses('getRiskStatement'),
+  },
+})
+
+const acceptRoute = createRoute({
+  ...contractRoute('acceptRisk'),
+  middleware: requireRoles('acceptRisk'),
+  tags: ['linkedin'],
+  summary: 'Accept the LinkedIn risk in writing',
+  security: [{ [PUBLIC_SECURITY]: [] }],
+  request: {
+    headers: requiredIdempotencyKeyHeader(
+      'Makes a repeat of the same request change nothing more.'
+    ),
+    body: {
+      required: true,
+      content: { 'application/json': { schema: acceptLinkedinRiskRequestSchema } },
+    },
+  },
+  responses: {
+    201: {
+      description: 'The recorded acceptance.',
+      content: { 'application/json': { schema: linkedinRiskAcceptanceSchema } },
+    },
+    ...failureResponses('acceptRisk'),
+  },
+})
+
+const revokeRoute = createRoute({
+  ...contractRoute('revokeRiskAcceptance'),
+  middleware: requireRoles('revokeRiskAcceptance'),
+  tags: ['linkedin'],
+  summary: 'Revoke the active LinkedIn risk acceptance',
+  security: [{ [PUBLIC_SECURITY]: [] }],
+  responses: {
+    204: { description: 'The acceptance is revoked, or there was none.' },
+    ...failureResponses('revokeRiskAcceptance'),
+  },
+})
+
+const acceptancesRoute = createRoute({
+  ...contractRoute('listRiskAcceptances'),
+  middleware: requireRoles('listRiskAcceptances'),
+  tags: ['linkedin'],
+  summary: 'List the risk acceptances of the Organization',
+  security: [{ [PUBLIC_SECURITY]: [] }],
+  request: { query: listLinkedinRiskAcceptancesQuerySchema },
+  responses: {
+    200: {
+      description: 'A page of acceptances, newest first.',
+      content: { 'application/json': { schema: linkedinRiskAcceptancePageSchema } },
+    },
+    ...failureResponses('listRiskAcceptances'),
+  },
+})
+
+const settingsRoute = createRoute({
+  ...contractRoute('getSettings'),
+  middleware: requireRoles('getSettings'),
+  tags: ['linkedin'],
+  summary: 'Read the LinkedIn channel settings',
+  security: [{ [PUBLIC_SECURITY]: [] }],
+  responses: {
+    200: {
+      description: 'The switch, the wording version and whether the channel is usable.',
+      content: { 'application/json': { schema: linkedinSettingsSchema } },
+    },
+    ...failureResponses('getSettings'),
+  },
+})
+
+const updateSettingsRoute = createRoute({
+  ...contractRoute('updateSettings'),
+  middleware: requireRoles('updateSettings'),
+  tags: ['linkedin'],
+  summary: 'Switch the LinkedIn channel on or off',
+  security: [{ [PUBLIC_SECURITY]: [] }],
+  request: {
+    headers: requiredIdempotencyKeyHeader(
+      'Makes a repeat of the same request change nothing more.'
+    ),
+    body: {
+      required: true,
+      content: { 'application/json': { schema: updateLinkedinSettingsRequestSchema } },
+    },
+  },
+  responses: {
+    200: {
+      description: 'The settings after the change.',
+      content: { 'application/json': { schema: linkedinSettingsSchema } },
+    },
+    ...failureResponses('updateSettings'),
+  },
+})
+
 /** The LinkedIn account routes under `/v1`. */
 export function createLinkedinRouter(deps: LinkedinDeps): OpenAPIHono<AuthedEnv> {
   const router = createRouter<AuthedEnv>()
@@ -119,5 +232,22 @@ export function createLinkedinRouter(deps: LinkedinDeps): OpenAPIHono<AuthedEnv>
     await Linkedin.disconnect(deps, callerOf(c), c.req.valid('param').accountId)
     return c.body(null, 204)
   })
+  router.openapi(statementRoute, (c) => c.json(Linkedin.riskStatement(), 200))
+  router.openapi(acceptRoute, async (c) =>
+    c.json(await Linkedin.acceptRisk(deps, callerOf(c), c.req.valid('json')), 201)
+  )
+  router.openapi(revokeRoute, async (c) => {
+    await Linkedin.revokeRisk(deps, callerOf(c))
+    return c.body(null, 204)
+  })
+  router.openapi(acceptancesRoute, async (c) =>
+    c.json(await Linkedin.listAcceptances(deps, callerOf(c), c.req.valid('query')), 200)
+  )
+  router.openapi(settingsRoute, async (c) =>
+    c.json(await Linkedin.getSettings(deps, callerOf(c)), 200)
+  )
+  router.openapi(updateSettingsRoute, async (c) =>
+    c.json(await Linkedin.updateSettings(deps, callerOf(c), c.req.valid('json').enabled), 200)
+  )
   return router
 }

@@ -1,11 +1,19 @@
 import { and, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm'
-import type { LinkedinAccountId, MembershipId } from 'tula-closeline-contract'
+import type {
+  LinkedinAccountId,
+  LinkedinRiskAcceptanceId,
+  MembershipId,
+} from 'tula-closeline-contract'
 import {
   linkedinAccounts,
   linkedinChannelSettings,
   linkedinRiskAcceptances,
 } from 'tula-closeline-db/schema'
-import type { LinkedinAccountRecord, LinkedinStore } from '~/ports/linkedin-store'
+import type {
+  LinkedinAccountRecord,
+  LinkedinStore,
+  RiskAcceptanceRecord,
+} from '~/ports/linkedin-store'
 import type { InOrganization } from './store'
 
 type Row = typeof linkedinAccounts.$inferSelect
@@ -24,6 +32,19 @@ function recordOf(row: Row): LinkedinAccountRecord {
     },
     connectedAt: row.connectedAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+  }
+}
+
+type AcceptanceRow = typeof linkedinRiskAcceptances.$inferSelect
+
+function acceptanceOf(row: AcceptanceRow): RiskAcceptanceRecord {
+  return {
+    id: row.id as LinkedinRiskAcceptanceId,
+    wordingVersion: row.wordingVersion,
+    acceptedByMembershipId: row.acceptedByMembershipId as MembershipId,
+    typedFullName: row.typedFullName,
+    acceptedAt: row.acceptedAt.toISOString(),
+    revokedAt: row.revokedAt?.toISOString() ?? null,
   }
 }
 
@@ -156,6 +177,130 @@ export function createPostgresLinkedinStore(inOrganization: InOrganization): Lin
           )
           .limit(1)
         return { enabled: settings?.enabled ?? false, accepted: acceptance !== undefined }
+      }),
+
+    // The lock serialises concurrent accepts of one Organization, so exactly one row is recorded.
+    acceptRisk: (organizationId, record) =>
+      inOrganization(organizationId, async (tx) => {
+        await tx.execute(
+          sql`select pg_advisory_xact_lock(hashtext(${`linkedin-risk:${organizationId}`}))`
+        )
+        const [existing] = await tx
+          .select()
+          .from(linkedinRiskAcceptances)
+          .where(
+            and(
+              eq(linkedinRiskAcceptances.organizationId, organizationId),
+              eq(linkedinRiskAcceptances.wordingVersion, record.wordingVersion),
+              isNull(linkedinRiskAcceptances.revokedAt)
+            )
+          )
+          .limit(1)
+        if (existing !== undefined) {
+          return { record: acceptanceOf(existing), created: false }
+        }
+        const [row] = await tx
+          .insert(linkedinRiskAcceptances)
+          .values({
+            id: record.id,
+            organizationId,
+            wordingVersion: record.wordingVersion,
+            acceptedByMembershipId: record.acceptedByMembershipId,
+            typedFullName: record.typedFullName,
+            acceptedAt: new Date(record.acceptedAt),
+          })
+          .returning()
+        if (row === undefined) {
+          throw new Error('the acceptance was not stored')
+        }
+        return { record: acceptanceOf(row), created: true }
+      }),
+
+    revokeRisk: (organizationId, at) =>
+      inOrganization(organizationId, async (tx) => {
+        const rows = await tx
+          .update(linkedinRiskAcceptances)
+          .set({ revokedAt: new Date(at) })
+          .where(
+            and(
+              eq(linkedinRiskAcceptances.organizationId, organizationId),
+              isNull(linkedinRiskAcceptances.revokedAt)
+            )
+          )
+          .returning({ id: linkedinRiskAcceptances.id })
+        return rows.length
+      }),
+
+    activeAcceptance: (organizationId, wordingVersion) =>
+      inOrganization(organizationId, async (tx) => {
+        const [row] = await tx
+          .select()
+          .from(linkedinRiskAcceptances)
+          .where(
+            and(
+              eq(linkedinRiskAcceptances.organizationId, organizationId),
+              eq(linkedinRiskAcceptances.wordingVersion, wordingVersion),
+              isNull(linkedinRiskAcceptances.revokedAt)
+            )
+          )
+          .limit(1)
+        return row === undefined ? null : acceptanceOf(row)
+      }),
+
+    listAcceptances: (organizationId, after, limit) =>
+      inOrganization(organizationId, async (tx) => {
+        const rows = await tx
+          .select()
+          .from(linkedinRiskAcceptances)
+          .where(
+            and(
+              eq(linkedinRiskAcceptances.organizationId, organizationId),
+              after === null
+                ? undefined
+                : or(
+                    lt(linkedinRiskAcceptances.acceptedAt, new Date(after.acceptedAt)),
+                    and(
+                      eq(linkedinRiskAcceptances.acceptedAt, new Date(after.acceptedAt)),
+                      lt(linkedinRiskAcceptances.id, after.id)
+                    )
+                  )
+            )
+          )
+          .orderBy(desc(linkedinRiskAcceptances.acceptedAt), desc(linkedinRiskAcceptances.id))
+          .limit(limit + 1)
+        const items = rows.slice(0, limit).map(acceptanceOf)
+        const last = items[items.length - 1]
+        return {
+          items,
+          next:
+            rows.length > limit && last !== undefined
+              ? { acceptedAt: last.acceptedAt, id: last.id }
+              : null,
+        }
+      }),
+
+    setEnabled: (organizationId, enabled, byMembershipId, at) =>
+      inOrganization(organizationId, async (tx) => {
+        await tx.execute(
+          sql`select pg_advisory_xact_lock(hashtext(${`linkedin-switch:${organizationId}`}))`
+        )
+        const [before] = await tx
+          .select({ enabled: linkedinChannelSettings.enabled })
+          .from(linkedinChannelSettings)
+          .where(eq(linkedinChannelSettings.organizationId, organizationId))
+        await tx
+          .insert(linkedinChannelSettings)
+          .values({
+            organizationId,
+            enabled,
+            updatedByMembershipId: byMembershipId,
+            updatedAt: new Date(at),
+          })
+          .onConflictDoUpdate({
+            target: linkedinChannelSettings.organizationId,
+            set: { enabled, updatedByMembershipId: byMembershipId, updatedAt: new Date(at) },
+          })
+        return { previous: before?.enabled ?? false }
       }),
   }
 }

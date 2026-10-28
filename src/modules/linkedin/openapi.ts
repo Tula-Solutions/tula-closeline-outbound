@@ -7,6 +7,12 @@ export type LinkedinRouteName =
   | 'listAccounts'
   | 'getAccount'
   | 'disconnectAccount'
+  | 'getRiskStatement'
+  | 'acceptRisk'
+  | 'revokeRiskAcceptance'
+  | 'listRiskAcceptances'
+  | 'getSettings'
+  | 'updateSettings'
 
 const ALL_ERRORS: Record<string, { code: string; status: number }> = {
   ...ERRORS,
@@ -19,7 +25,7 @@ const ALWAYS = ['auth.unauthenticated', 'server.internal'] as const
 export function contractRoute(name: LinkedinRouteName) {
   const route = LINKEDIN_ROUTES[name]
   return {
-    method: route.method.toLowerCase() as 'get' | 'post' | 'delete',
+    method: route.method.toLowerCase() as 'get' | 'post' | 'delete' | 'patch',
     path: route.path,
     description: route.description,
   }

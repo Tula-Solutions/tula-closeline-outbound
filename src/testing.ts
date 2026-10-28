@@ -54,6 +54,7 @@ import { SERVICE } from '~/info'
 import { type OutboundDefinition, registry } from '~/messages'
 import { campaignHandlers } from '~/modules/campaign/audience'
 import { enrichmentHandlers } from '~/modules/enrichment/handlers'
+import type { LinkedinChannelDisabled } from '~/modules/linkedin/deps'
 import type { MailboxStateChanged } from '~/modules/mailbox/deps'
 
 /** The issuer and audience the test environment's tokens carry. */
@@ -86,6 +87,8 @@ export type TestDeps = Container & {
   linkedinStore: MemoryLinkedinStore
   /** Every `mailbox.state_changed` published, in order. */
   mailEvents: { organizationId: string; event: MailboxStateChanged }[]
+  /** The `linkedin.channel_disabled` events published, in order. */
+  linkedinEvents: { organizationId: string; event: LinkedinChannelDisabled }[]
   /** Every JSON log line written, in order. */
   logLines: string[]
   /** Every call to `reportError`, in order. */
@@ -209,6 +212,7 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     logger,
   }
 
+  const linkedinEvents: TestDeps['linkedinEvents'] = []
   const linkedinProvider = createMemoryLinkedInProvider(time.clock)
   const linkedinStore = createMemoryLinkedinStore()
   const linkedin: Container['linkedin'] = {
@@ -216,6 +220,9 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     access: core.access,
     clock: time.clock,
     provider: linkedinProvider,
+    events: async (organizationId, event) => {
+      linkedinEvents.push({ organizationId, event })
+    },
     logger,
   }
 
@@ -240,6 +247,7 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     mail,
     outlookMail,
     mailEvents,
+    linkedinEvents,
     core,
     guard,
     config,

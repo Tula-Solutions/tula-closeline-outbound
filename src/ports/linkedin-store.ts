@@ -1,6 +1,7 @@
 import type {
   LinkedinAccountId,
   LinkedinLimits,
+  LinkedinRiskAcceptanceId,
   MembershipId,
   OrganizationId,
 } from 'tula-closeline-contract'
@@ -40,6 +41,22 @@ export type LinkedinAccountPage = { items: LinkedinAccountRecord[]; next: Linked
 /** The channel as the connection start needs it: the Admin switch and whether the wording is accepted. */
 export type ChannelState = { enabled: boolean; accepted: boolean }
 
+/** A risk acceptance as stored: append-only, and the only change is `revokedAt`, set once. */
+export type RiskAcceptanceRecord = {
+  id: LinkedinRiskAcceptanceId
+  wordingVersion: string
+  acceptedByMembershipId: MembershipId
+  typedFullName: string
+  acceptedAt: string
+  revokedAt: string | null
+}
+
+/** Where a newest-first page of acceptances resumes: after the one with this time and id. */
+export type AcceptancePosition = { acceptedAt: string; id: LinkedinRiskAcceptanceId }
+
+/** One page of acceptances, newest first; `next` is set when more follow. */
+export type AcceptancePage = { items: RiskAcceptanceRecord[]; next: AcceptancePosition | null }
+
 /** The store of LinkedIn accounts; every call is scoped to one Organization. */
 export type LinkedinStore = {
   /**
@@ -70,4 +87,32 @@ export type LinkedinStore = {
   ) => Promise<{ record: LinkedinAccountRecord; changed: boolean } | null>
   /** The Admin switch and whether a non-revoked acceptance of this wording version exists. */
   channelState: (organizationId: OrganizationId, wordingVersion: string) => Promise<ChannelState>
+  /**
+   * Records an acceptance. When a non-revoked acceptance of the same wording version exists it is
+   * returned unchanged (`created` false) and nothing is written; concurrent calls record one.
+   */
+  acceptRisk: (
+    organizationId: OrganizationId,
+    record: RiskAcceptanceRecord
+  ) => Promise<{ record: RiskAcceptanceRecord; created: boolean }>
+  /** Revokes every non-revoked acceptance at `at`; the count is 0 when there was none. */
+  revokeRisk: (organizationId: OrganizationId, at: string) => Promise<number>
+  /** The non-revoked acceptance of this wording version, or null. */
+  activeAcceptance: (
+    organizationId: OrganizationId,
+    wordingVersion: string
+  ) => Promise<RiskAcceptanceRecord | null>
+  /** One page of acceptances, newest first, at most `limit`. */
+  listAcceptances: (
+    organizationId: OrganizationId,
+    after: AcceptancePosition | null,
+    limit: number
+  ) => Promise<AcceptancePage>
+  /** Sets the Admin switch (one row per Organization) and answers what it was before. */
+  setEnabled: (
+    organizationId: OrganizationId,
+    enabled: boolean,
+    byMembershipId: MembershipId,
+    at: string
+  ) => Promise<{ previous: boolean }>
 }

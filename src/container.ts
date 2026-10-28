@@ -265,6 +265,10 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     clock: systemClock,
     // No vendor adapter exists yet: only local runs get the stand-in, anywhere else connecting is unavailable.
     provider: env.ENVIRONMENT === 'local' ? createMemoryLinkedInProvider(systemClock) : null,
+    // There is no event bus in this service yet; the change is logged until one exists.
+    events: async (organizationId, event) => {
+      logger.info('linkedin.channel_disabled', { organizationId, ...event })
+    },
     logger,
   }
   const mailboxes: MailboxDeps = {
