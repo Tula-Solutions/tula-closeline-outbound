@@ -58,6 +58,8 @@ export type MailEventDeps = {
     prospectId: ProspectId,
     reason: NonNullable<Enrollment['stopReason']>
   ) => Promise<number>
+  /** Checks the OIDC token on Gmail's Pub/Sub push (`Authorization` header); false refuses it. */
+  verifyPush: (authorization: string | undefined) => Promise<boolean>
   /** Carries `mail.poll`: a webhook only enqueues, the consumer reads the inbox. */
   queue: Queue<OutboundEnvelope>
   /** Publishes an event for the Organization. */

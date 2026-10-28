@@ -86,8 +86,12 @@ export function createMailEventRouter(deps: MailEventDeps): OpenAPIHono<AppEnv> 
   }
 
   router.openapi(gmailRoute, async (c) => {
-    // The push body only says that something changed; it is never read.
-    if (!(await pollState(c.req.query('state')))) {
+    // The push body only says that something changed; it is never read. Pub/Sub proves itself with
+    // a Google-signed token for our URL, and the state names the Mailbox.
+    if (
+      !(await deps.verifyPush(c.req.header('authorization'))) ||
+      !(await pollState(c.req.query('state')))
+    ) {
       throw domainError(ERRORS['auth.unauthenticated'])
     }
     return c.body(null, 204)

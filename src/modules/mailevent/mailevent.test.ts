@@ -8,7 +8,13 @@ import {
   type ProspectId,
 } from 'tula-closeline-contract'
 import type { InboundKind } from '~/ports/mail-transport'
-import { createTestApp, newOrganizationId, newUserId, type TestIdentity } from '~/testing'
+import {
+  createTestApp,
+  newOrganizationId,
+  newUserId,
+  PUSH_AUTHORIZATION,
+  type TestIdentity,
+} from '~/testing'
 import { send } from '../send/service'
 import { signUnsubscribe } from '../send/unsubscribe'
 import * as MailEvents from './service'
@@ -434,11 +440,22 @@ describe('webhooks', () => {
     w.t.deps.clock.advance('1m')
     const state = signWebhookState(w.t.deps.env.MAIL_STATE_SECRET, w.organizationId, w.mailboxId)
     const url = '/v1/public/mail/webhooks/gmail'
-    const bad = await w.t.app.request(`${url}?state=${state.slice(0, -2)}xx`, { method: 'POST' })
-    const none = await w.t.app.request(url, { method: 'POST' })
+    const push = { authorization: PUSH_AUTHORIZATION }
+    const bad = await w.t.app.request(`${url}?state=${state.slice(0, -2)}xx`, {
+      method: 'POST',
+      headers: push,
+    })
+    const none = await w.t.app.request(url, { method: 'POST', headers: push })
     expect([bad.status, none.status]).toEqual([401, 401])
     expect(w.t.deps.queue.depth().visible).toBe(0)
-    const ok = await w.t.app.request(`${url}?state=${state}`, { method: 'POST', body: '{}' })
+    const noToken = await w.t.app.request(`${url}?state=${state}`, { method: 'POST', body: '{}' })
+    expect(noToken.status).toBe(401)
+    expect(w.t.deps.queue.depth().visible).toBe(0)
+    const ok = await w.t.app.request(`${url}?state=${state}`, {
+      method: 'POST',
+      headers: { authorization: PUSH_AUTHORIZATION },
+      body: '{}',
+    })
     expect(ok.status).toBe(204)
     expect((await w.enrollment(p.enrollmentId))?.state).toBe('active')
     expect(w.t.deps.queue.depth().visible).toBe(1)

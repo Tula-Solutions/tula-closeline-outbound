@@ -81,6 +81,9 @@ import type { MailEvent } from '~/modules/mailevent/deps'
 import { mailEventHandlers } from '~/modules/mailevent/service'
 import type { SignalDeps, SignalEvent } from '~/modules/signal/deps'
 
+/** The Authorization header the test push verifier accepts. */
+export const PUSH_AUTHORIZATION = 'Bearer test-push-token'
+
 /** The issuer and audience the test environment's tokens carry. */
 const TEST_ISSUER = 'https://auth.test'
 const TEST_AUDIENCE = 'closeline'
@@ -296,6 +299,7 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     clock: time.clock,
     logger,
     secret: env.MAIL_STATE_SECRET,
+    verifyPush: async (authorization) => authorization === PUSH_AUTHORIZATION,
     queue,
     stopProspect: (organizationId, prospectId, reason) =>
       stopForProspect(engine, organizationId, prospectId, reason),

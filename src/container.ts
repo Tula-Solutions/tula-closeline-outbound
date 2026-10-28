@@ -24,6 +24,7 @@ import { createLocalKeySecretBox, createUnconfiguredSecretBox } from '~/adapters
 import { createSecretBoxVault } from '~/adapters/crypto/vault'
 import { createExaWebSearch } from '~/adapters/exa/web-search'
 import { createGmailMailTransport } from '~/adapters/gmail/mail-transport'
+import { createGooglePushVerifier } from '~/adapters/gmail/push-verifier'
 import { createGraphMailTransport } from '~/adapters/graph/mail-transport'
 import { createHttpCoreProspects } from '~/adapters/http/core'
 import { createHttpCoreSuppression } from '~/adapters/http/core-suppression'
@@ -430,6 +431,15 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     clock: systemClock,
     logger,
     secret: env.MAIL_STATE_SECRET,
+    verifyPush:
+      env.GMAIL_PUSH_AUDIENCE !== undefined && env.GMAIL_PUSH_SERVICE_ACCOUNT !== undefined
+        ? createGooglePushVerifier({
+            audience: env.GMAIL_PUSH_AUDIENCE,
+            serviceAccount: env.GMAIL_PUSH_SERVICE_ACCOUNT,
+            now: () => systemClock.now().getTime(),
+          })
+        : // Without the audience and account the webhook cannot tell Google from anyone; only local runs open.
+          async () => env.ENVIRONMENT === 'local',
     queue,
     stopProspect: (organizationId, prospectId, reason) =>
       stopForProspect(engine, organizationId, prospectId, reason),
