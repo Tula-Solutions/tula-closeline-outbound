@@ -198,6 +198,22 @@ also pauses the Mailbox, a reply stops the Enrollment. Each is logged once in `m
 logged. Nothing schedules `pollMailbox` and nothing creates the subscription or watch that carries
 the state yet; both are open.
 
+## Sequence engine (`src/modules/engine`)
+
+`sweep` (timer in `server.ts`, `ENGINE_SWEEP_INTERVAL_MS`, 0 = off) asks `dueOrganizations` which
+Organizations have due Enrollments, `claimDue`s a page of each (`FOR UPDATE SKIP LOCKED`, due time moves
+to the end of the lease) and queues one `enrollment.step` message each. `runStep` then re-checks the
+Enrollment is still at that Step and attempt epoch, and acts: email goes through the window check, the
+Contact Check, the Draft source and `send()` (key = Enrollment, Step index, epoch); wait, branch
+(`no_response` + default only), rep_task and end move the Enrollment with a conditional `advance`.
+A Draft that is ungrounded, fails a check or is in a `review` Campaign goes to approvals and the
+Enrollment waits 24 h. `stopForProspect` stops a Prospect's Enrollments (reply, bounce, unsubscribe) and
+must be called by those tickets. The Draft source, approvals and Prospect contacts are in-memory
+stand-ins (shortcuts) until M06-T7, M09 and core serve them, so the sweep is OFF unless
+`ENGINE_ENABLED=true` (state must not live in process memory). A sweep starts at a random Organization
+and wraps, so a backlog cannot starve later ones. Env: `ENGINE_ENABLED`, `ENGINE_SWEEP_INTERVAL_MS`,
+`ENGINE_ORG_BATCH`, `ENGINE_STEP_PAGE`, `ENGINE_LEASE_SECONDS`.
+
 ## Enrichment providers and settings (`src/adapters/providers`, `src/modules/enrichment/settings*.ts`)
 
 Apollo (person, company) and ZeroBounce (email verifier) are the two adapters. Each takes an
@@ -223,6 +239,9 @@ secret box needs `MAIL_SECRET_BOX_KEY`-style configuration; unconfigured, settin
 the queue publish in batches of ten. The waterfall itself runs from the queue, off the request path.
 `LinkedinStore.reserve` (`bench/linkedin-quota.bench.test.ts`): O(1) per send, one send-key lookup
 and two counters under a per-account advisory lock (Postgres), never the Organization's size.
+`branchTarget` (`bench/engine.bench.test.ts`): O(arms) per Step, no I/O. A sweep tick is O(due rows in a
+page) per Organization, bounded to 10 Organization pages: `claimDue` reads `enrollments_due_idx` in due
+order with a limit. The 10,000-of-1,000,000 case is not measured here (the memory store scans).
 The per-request middleware stack (`createBaseApp`) and `/healthz` keep the budgets in `bench/`.
 
 A benchmark times `measure(operation)`: a warm-up, then several batches, gated on the fastest, so a
@@ -233,3 +252,16 @@ name the function here when a new hot path appears.
 ## Issues
 
 All tickets live in the hub: `gh issue list -R Tula-Solutions/tula-closeline --label repo:outbound`.
+
+## Model and web search (`src/adapters/anthropic`, `src/adapters/exa`)
+
+`container.ai` holds the `Model` and `WebSearch` ports: Anthropic (`ANTHROPIC_API_KEY`, model
+`ANTHROPIC_MODEL`) and Exa (`EXA_API_KEY`) when their keys are set, memory stand-ins when `local`,
+otherwise null. Both go through `adapters/vendor-retry.ts` (per-try timeout, jittered bounded retry,
+fixed-word errors; keys travel only in headers and never reach an error or log). Anthropic answers
+through a forced tool call; sources are escaped `<source>` data blocks; the answer is untrusted.
+Before each call the Organization's month is read from `model_usage` and a spent budget throws
+`ModelBudgetExceededError` (callers map it to `draft.budget_exceeded`); usage is recorded after.
+`ModelRequest.organizationId` is required in practice: a real model refuses a call without it.
+The model refuses to construct unless `ANTHROPIC_NO_TRAINING_CONFIRMED=true`. Budget check then
+record is not atomic, so concurrent calls can overshoot by their own cost.

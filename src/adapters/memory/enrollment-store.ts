@@ -147,5 +147,92 @@ export function createMemoryEnrollmentStore(): EnrollmentStore {
           .map((e) => e.prospectId)
       )
     },
+
+    async dueOrganizations(after, batch, now) {
+      const ids = [...organizations.entries()]
+        .filter(
+          ([id, rows]) =>
+            (after === null || id > after) &&
+            [...rows.values()].some(
+              (e) =>
+                e.enrollment.state === 'active' &&
+                e.enrollment.nextDueAt !== null &&
+                e.enrollment.nextDueAt <= now
+            )
+        )
+        .map(([id]) => id as OrganizationId)
+        .sort()
+      const page = ids.slice(0, batch)
+      return {
+        organizationIds: page,
+        next: ids.length > batch ? (page[page.length - 1] ?? null) : null,
+      }
+    },
+    async claimDue(organizationId, now, leaseUntil, limit) {
+      const due = [...entries(organizationId).values()]
+        .filter(
+          (e) =>
+            e.enrollment.state === 'active' &&
+            e.enrollment.nextDueAt !== null &&
+            e.enrollment.nextDueAt <= now
+        )
+        .sort(
+          (a, b) =>
+            (a.enrollment.nextDueAt ?? '').localeCompare(b.enrollment.nextDueAt ?? '') ||
+            a.enrollment.id.localeCompare(b.enrollment.id)
+        )
+        .slice(0, limit)
+      for (const entry of due) {
+        entry.enrollment = { ...entry.enrollment, nextDueAt: leaseUntil }
+      }
+      return structuredClone(due.map((e) => e.enrollment))
+    },
+    async advance(organizationId, id, expect, to, events) {
+      const found = entries(organizationId).get(id)
+      const current = found?.enrollment
+      if (
+        found === undefined ||
+        current === undefined ||
+        current.state !== 'active' ||
+        current.currentStepKey !== expect.stepKey ||
+        current.attemptEpoch !== expect.attemptEpoch
+      ) {
+        return null
+      }
+      found.enrollment =
+        to.state === 'active'
+          ? {
+              ...current,
+              currentStepKey: to.currentStepKey,
+              currentStep: to.currentStep,
+              attemptEpoch: to.attemptEpoch,
+              nextDueAt: to.nextDueAt,
+            }
+          : {
+              ...current,
+              state: 'completed',
+              completedAt: to.at,
+              nextDueAt: null,
+              currentStepKey: null,
+              currentStep: null,
+            }
+      found.events.push(...structuredClone([...events]))
+      return structuredClone(found.enrollment)
+    },
+    async activeOfProspect(organizationId, prospectId, limit) {
+      return structuredClone(
+        [...entries(organizationId).values()]
+          .map((e) => e.enrollment)
+          .filter((e) => e.state === 'active' && e.prospectId === prospectId)
+          .slice(0, limit)
+      )
+    },
+    async lastEventAt(organizationId, id, kind) {
+      const times = (entries(organizationId).get(id)?.events ?? [])
+        .filter((e) => e.kind === kind)
+        .map((e) => e.occurredAt)
+        .sort()
+      return times[times.length - 1] ?? null
+    },
   }
 }

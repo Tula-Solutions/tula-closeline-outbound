@@ -1,0 +1,16 @@
+{
+  "id": "msg_01",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-5-5",
+  "content": [
+    {
+      "type": "tool_use",
+      "id": "toolu_01",
+      "name": "answer",
+      "input": { "statements": [{ "text": "Acme raised a Series B.", "sourceId": "s1" }] }
+    }
+  ],
+  "stop_reason": "tool_use",
+  "usage": { "input_tokens": 1200, "output_tokens": 300 }
+}
