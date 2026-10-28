@@ -208,6 +208,9 @@ Logs carry ids and counts only.
 - The HTTP route without a Brand Voice is `voice.not_found`; the engine step instead saves a neutral default
   voice as version 1 and writes with it.
 - Text of the Brief, web pages, Playbook and model output is untrusted; logs carry ids and counts only.
+- `POST /v1/campaigns/{campaignId}/preview` (`src/modules/preview`) runs `Draft.previewDraft` for one to five
+  Prospects of an email Step: no Draft is stored, no default voice saved, nothing sent or queued. It does
+  build or reuse the Prospect's cached Research Brief. A sixth Prospect is `preview.too_many_prospects`.
 
 ## Signals and fit (`src/modules/signal`, `src/modules/fit`)
 

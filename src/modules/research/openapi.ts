@@ -15,12 +15,14 @@ export type ResearchRouteName =
   | 'createDraft'
   | 'getOutreachDraft'
   | 'regenerateDraft'
+  | 'previewCampaign'
 
 const ALL_ERRORS: Record<string, { code: string; status: number }> = {
   ...ERRORS,
   ...MESSAGING_ERRORS,
   'prospect.not_found': PROSPECT_ERRORS['prospect.not_found'],
   'campaign.not_found': CAMPAIGN_ERRORS['campaign.not_found'],
+  'campaign.sequence_version_conflict': CAMPAIGN_ERRORS['campaign.sequence_version_conflict'],
 }
 
 /** The codes every public route may answer with besides its own. */
