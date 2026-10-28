@@ -47,7 +47,10 @@ const INSTRUCTIONS = [
   'The angle cites Playbook moment ids only when it draws on them.',
 ].join(' ')
 
-const cursorSchema = z.strictObject({ createdAt: z.string().max(40), id: z.string().max(64) })
+const cursorSchema = z.strictObject({
+  createdAt: z.iso.datetime(),
+  id: z.string().regex(/^brf_[0-9a-f]{32}$/),
+})
 
 const answerSchema = z.object({
   statements: z.array(z.unknown()).max(200),
@@ -83,17 +86,19 @@ async function assertVisible(deps: ResearchDeps, caller: ResearchCaller, prospec
 async function withDeadline<T>(ms: number, work: (signal: AbortSignal) => Promise<T>) {
   const controller = new AbortController()
   let timer: ReturnType<typeof setTimeout> | undefined
+  let grace: ReturnType<typeof setTimeout> | undefined
   const expired = new Promise<'timeout'>((resolve) => {
     timer = setTimeout(() => {
       controller.abort()
       // A short grace, so an adapter that throws on abort (with its partial results) is heard first.
-      setTimeout(() => resolve('timeout'), ABORT_GRACE_MS)
+      grace = setTimeout(() => resolve('timeout'), ABORT_GRACE_MS)
     }, ms)
   })
   try {
     return await Promise.race([work(controller.signal), expired])
   } finally {
     clearTimeout(timer)
+    clearTimeout(grace)
   }
 }
 
@@ -413,8 +418,11 @@ export async function listBriefs(
 ): Promise<{ items: ResearchBrief[]; nextCursor: string | null }> {
   await assertVisible(deps, caller, prospectId)
   const limit = Math.min(query.limit, MAX_PAGE)
-  const after =
-    (query.cursor === undefined ? null : decodeCursor(query.cursor, cursorSchema)) ?? null
+  const decoded = query.cursor === undefined ? null : decodeCursor(query.cursor, cursorSchema)
+  if (decoded === undefined) {
+    throw domainError(ERRORS['request.invalid'])
+  }
+  const after = decoded
   const rows = await deps.store.list(caller.organizationId, prospectId, after, limit + 1)
   const items = rows.slice(0, limit)
   const last = items.at(-1)

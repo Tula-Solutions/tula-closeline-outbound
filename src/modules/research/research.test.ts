@@ -211,6 +211,16 @@ describe('Research Brief', () => {
     expect(codeOf(empty.body)).toBe('draft.no_prospect_data')
   })
 
+  test('a malformed list cursor answers request.invalid', async () => {
+    const w = await world()
+    const prospect = w.seed(w.admin)
+    const b64 = (v: string) => Buffer.from(v).toString('base64url')
+    for (const cursor of [b64('{"createdAt":"x","id":"y"}'), 'garbage']) {
+      const bad = await w.call('GET', `/v1/prospects/${prospect}/briefs?cursor=${cursor}`, w.admin)
+      expect(codeOf(bad.body)).toBe('request.invalid')
+    }
+  })
+
   test('the model is told whose spend the call counts against', async () => {
     const w = await world()
     await w.brief(w.admin, w.seed(w.admin))
