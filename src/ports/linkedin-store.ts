@@ -57,6 +57,36 @@ export type AcceptancePosition = { acceptedAt: string; id: LinkedinRiskAcceptanc
 /** One page of acceptances, newest first; `next` is set when more follow. */
 export type AcceptancePage = { items: RiskAcceptanceRecord[]; next: AcceptancePosition | null }
 
+/** What a send is: a connection request or a message. */
+export type LinkedinSendKind = 'connection' | 'message'
+
+/** A quota reservation: the caller's key, the account, the UTC day and the Monday that starts its week. */
+export type ReserveInput = {
+  accountId: LinkedinAccountId
+  sendKey: string
+  kind: LinkedinSendKind
+  day: string
+  weekStart: string
+  at: string
+}
+
+/**
+ * The answer to a reservation: `reserved` (counted once), `duplicate` (the key was reserved before,
+ * nothing counted, `state` says whether it was sent) `over_limit` (nothing written) or `not_connected` (the account was paused or disconnected meanwhile).
+ */
+export type ReserveResult =
+  | { status: 'reserved' }
+  | { status: 'duplicate'; state: 'sending' | 'sent' }
+  | { status: 'over_limit'; limit: 'daily' | 'weekly' }
+  | { status: 'not_connected' }
+
+/** What an account has used: today's requests and messages, and this week's requests. */
+export type LinkedinUsageRecord = {
+  connections: number
+  messages: number
+  weeklyConnections: number
+}
+
 /** The store of LinkedIn accounts; every call is scoped to one Organization. */
 export type LinkedinStore = {
   /**
@@ -115,4 +145,37 @@ export type LinkedinStore = {
     byMembershipId: MembershipId,
     at: string
   ) => Promise<{ previous: boolean }>
+  /**
+   * Counts one send against the account's limits and records its key, in one step that concurrent
+   * callers cannot overrun. The limits are the account's own, read in the same step.
+   */
+  reserve: (organizationId: OrganizationId, input: ReserveInput) => Promise<ReserveResult>
+  /** Marks a reserved send as sent. */
+  markSent: (organizationId: OrganizationId, sendKey: string, at: string) => Promise<void>
+  /** Gives a reservation back after a send that definitely did not happen; false when it was not `sending`. */
+  release: (organizationId: OrganizationId, sendKey: string) => Promise<boolean>
+  /** Pauses a connected account (status and reason); null when it is not connected, so only the first caller pauses it. */
+  pause: (
+    organizationId: OrganizationId,
+    id: LinkedinAccountId,
+    status: 'paused' | 'restricted',
+    reason: NonNullable<LinkedinAccountRecord['pauseReason']>,
+    at: string
+  ) => Promise<LinkedinAccountRecord | null>
+  /** Sets the limits of one account; null when it is not there. */
+  setLimits: (
+    organizationId: OrganizationId,
+    id: LinkedinAccountId,
+    limits: LinkedinLimits,
+    at: string
+  ) => Promise<LinkedinAccountRecord | null>
+  /** What the account used on `day` and in the week from `weekStart` to `day`. */
+  usageOf: (
+    organizationId: OrganizationId,
+    id: LinkedinAccountId,
+    day: string,
+    weekStart: string
+  ) => Promise<LinkedinUsageRecord>
+  /** When the account last reserved a send, or null. */
+  lastSendAt: (organizationId: OrganizationId, id: LinkedinAccountId) => Promise<string | null>
 }

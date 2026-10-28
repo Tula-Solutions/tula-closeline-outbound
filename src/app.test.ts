@@ -46,6 +46,7 @@ test('the app serves its OpenAPI document describing every route and the error b
     '/v1/linkedin/accounts',
     '/v1/linkedin/accounts/connection',
     '/v1/linkedin/accounts/{accountId}',
+    '/v1/linkedin/accounts/{accountId}/limits',
     '/v1/linkedin/risk-acceptance',
     '/v1/linkedin/risk-acceptances',
     '/v1/linkedin/risk-statement',

@@ -58,7 +58,11 @@ import { SERVICE } from '~/info'
 import { type OutboundDefinition, registry } from '~/messages'
 import { campaignHandlers } from '~/modules/campaign/audience'
 import { enrichmentHandlers } from '~/modules/enrichment/handlers'
-import type { LinkedinChannelDisabled } from '~/modules/linkedin/deps'
+import {
+  defaultSendSettings,
+  type LinkedinAccountPaused,
+  type LinkedinChannelDisabled,
+} from '~/modules/linkedin/deps'
 import type { MailboxStateChanged } from '~/modules/mailbox/deps'
 import type { SignalDeps, SignalEvent } from '~/modules/signal/deps'
 
@@ -96,6 +100,8 @@ export type TestDeps = Container & {
   signalEvents: { organizationId: string; event: SignalEvent }[]
   /** The `linkedin.channel_disabled` events published, in order. */
   linkedinEvents: { organizationId: string; event: LinkedinChannelDisabled }[]
+  /** The `linkedin.account_paused` events published, in order. */
+  linkedinPaused: { organizationId: string; event: LinkedinAccountPaused }[]
   /** Every JSON log line written, in order. */
   logLines: string[]
   /** Every call to `reportError`, in order. */
@@ -254,6 +260,7 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
   }
 
   const linkedinEvents: TestDeps['linkedinEvents'] = []
+  const linkedinPaused: TestDeps['linkedinPaused'] = []
   const linkedinProvider = createMemoryLinkedInProvider(time.clock)
   const linkedinStore = createMemoryLinkedinStore()
   const linkedin: Container['linkedin'] = {
@@ -264,6 +271,12 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     events: async (organizationId, event) => {
       linkedinEvents.push({ organizationId, event })
     },
+    guard,
+    accountPaused: async (organizationId, event) => {
+      linkedinPaused.push({ organizationId, event })
+    },
+    // No waiting in tests, no jitter, and no gap between sends unless a test sets one.
+    send: defaultSendSettings({ sleep: async () => {}, random: () => 0, minGapMs: 0, jitterMs: 0 }),
     logger,
   }
 
@@ -293,6 +306,7 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     outlookMail,
     mailEvents,
     linkedinEvents,
+    linkedinPaused,
     core,
     guard,
     config,

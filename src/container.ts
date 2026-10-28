@@ -53,7 +53,7 @@ import type { CampaignDeps } from '~/modules/campaign/deps'
 import type { EnrichmentDeps } from '~/modules/enrichment/deps'
 import { enrichmentHandlers } from '~/modules/enrichment/handlers'
 import type { FitDeps } from '~/modules/fit/deps'
-import type { LinkedinDeps } from '~/modules/linkedin/deps'
+import { defaultSendSettings, type LinkedinDeps } from '~/modules/linkedin/deps'
 import type { MailboxDeps } from '~/modules/mailbox/deps'
 import type { SendDeps } from '~/modules/send/deps'
 import type { SignalDeps } from '~/modules/signal/deps'
@@ -313,6 +313,11 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     events: async (organizationId, event) => {
       logger.info('linkedin.channel_disabled', { organizationId, ...event })
     },
+    guard: guardHttp ?? createMemoryContactGuard(),
+    accountPaused: async (organizationId, event) => {
+      logger.info('linkedin.account_paused', { organizationId, ...event })
+    },
+    send: defaultSendSettings(),
     logger,
   }
   const mailboxes: MailboxDeps = {
