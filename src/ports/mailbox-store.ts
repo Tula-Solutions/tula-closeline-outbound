@@ -128,6 +128,18 @@ export type MailboxStore = {
     reason: 'disconnected_by_owner' | 'auth_revoked',
     at: string
   ) => Promise<{ record: MailboxRecord; changed: boolean } | null>
+  /**
+   * Pauses a Mailbox that is sending (warming, healthy or limited) with a reason; `changed` is
+   * false when it was already paused or disconnected. Null when the Mailbox is not there.
+   */
+  pause: (
+    organizationId: OrganizationId,
+    id: MailboxId,
+    reason: 'complaint_spike' | 'bounce_spike',
+    at: string
+  ) => Promise<{ record: MailboxRecord; before: MailboxState; changed: boolean } | null>
+  /** Records when the inbox was last read, so the next read starts there. */
+  markSynced: (organizationId: OrganizationId, id: MailboxId, at: string) => Promise<void>
   /** Records a connect attempt; a repeat of the same `stateHash` changes nothing. */
   registerAttempt: (organizationId: OrganizationId, attempt: StoredAttempt) => Promise<void>
   /**

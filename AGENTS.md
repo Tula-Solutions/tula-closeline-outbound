@@ -180,9 +180,24 @@ the row `sending` (it still counts) and never sends again; `reconcile` settles r
 ten minutes as `sent` with no provider ids, since the provider has no lookup. Any other provider
 error settles `failed`, final for the key (a retry needs a new `attemptEpoch`). Every message
 carries `List-Unsubscribe` (one-click) and a signed link from `MAIL_UNSUBSCRIBE_URL`
-(`unsubscribe.ts`, 30 days); the route behind it is not built. `GET /v1/mail/capacity` shows
+(`unsubscribe.ts`, 30 days). `GET /v1/mail/capacity` shows
 remaining sends and the next send time per Mailbox (`capacity.ts`). No internal `submitSend` HTTP
 route yet (no inbound shared-secret auth).
+
+## Mail events (`src/modules/mailevent`)
+
+Public routes, mounted before the token middleware: the unsubscribe page (`GET`/`POST
+/v1/public/mail/unsubscribe/{token}`, same answer for known and unknown Prospects, only the token's
+Organization is touched) and the Gmail and Graph notification webhooks. A webhook proves itself with
+a signed state naming Organization and Mailbox (`state.ts`, Graph's `clientState`, Gmail's `state`
+query); the push body is never read. A notice reads the Mailbox inbox (`MailTransport.fetchInbound`,
+headers only) and `ingest` matches it to our Send by thread. Hard bounce (or the third soft one in an
+Enrollment) and complaint suppress through core (`CoreSuppression`, HTTP or memory), a complaint
+also pauses the Mailbox, a reply stops the Enrollment. Each is logged once in `mail_events`
+(idempotent on the provider message id) and published as a `mail.*` event, which today is only
+logged. Nothing schedules `pollMailbox` and nothing creates the subscription or watch that carries
+the state yet; both are open.
+
 ## Enrichment providers and settings (`src/adapters/providers`, `src/modules/enrichment/settings*.ts`)
 
 Apollo (person, company) and ZeroBounce (email verifier) are the two adapters. Each takes an

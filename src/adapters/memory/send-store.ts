@@ -110,6 +110,18 @@ export function createMemorySendStore(
         ? { mailboxId: last.mailboxId, providerThreadId: last.providerThreadId }
         : null
     },
+    async findByThread(organizationId, mailboxId, providerThreadId) {
+      return (
+        inOrg(organizationId)
+          .filter(
+            (s) =>
+              s.state === 'sent' &&
+              s.mailboxId === mailboxId &&
+              s.providerThreadId === providerThreadId
+          )
+          .sort((a, b) => (at(a) < at(b) ? 1 : -1))[0] ?? null
+      )
+    },
     async listStale(organizationId, before, limit) {
       return inOrg(organizationId)
         .filter((s) => s.state === 'sending' && s.decidedAt < before)

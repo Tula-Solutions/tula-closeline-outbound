@@ -1,8 +1,10 @@
 import { createHash, randomBytes } from 'node:crypto'
+import { classifyInbound, INBOUND_PAGE_SIZE } from '~/adapters/inbound-classify'
 import { createProviderCall } from '~/adapters/provider-call'
 import {
   type ConnectedAccount,
   type GrantTokens,
+  type InboundNotice,
   type MailTransport,
   MailTransportError,
   type OutgoingMessage,
@@ -302,6 +304,73 @@ export function createGmailMailTransport(options: GmailMailTransportOptions): Ma
         throw new MailTransportError('rejected', status)
       }
       return { providerMessageId: id, threadId: field(body, 'threadId') ?? id }
+    },
+
+    async fetchInbound(accessToken, { since, ownAddress }) {
+      const root = `${options.apiBaseUrl.replace(/\/$/, '')}/gmail/v1/users/me/messages`
+      const headers = { authorization: `Bearer ${accessToken}`, accept: 'application/json' }
+      const read = async (url: string) => {
+        const { status, body } = await call(url, { method: 'GET', headers }, retryAlways)
+        if (status === 401) {
+          throw new MailTransportError('token_expired', status)
+        }
+        if (status !== 200) {
+          throw new MailTransportError('rejected', status)
+        }
+        return body
+      }
+      const after = Math.floor(new Date(since).getTime() / 1000)
+      const list = await read(
+        `${root}?${new URLSearchParams({ q: `in:inbox after:${after}`, maxResults: String(INBOUND_PAGE_SIZE) })}`
+      )
+      const ids = (
+        typeof list === 'object' &&
+        list !== null &&
+        Array.isArray((list as { messages?: unknown }).messages)
+          ? ((list as { messages: unknown[] }).messages as unknown[])
+          : []
+      )
+        .map((m) => field(m, 'id'))
+        .filter((id): id is string => id !== undefined)
+        .slice(0, INBOUND_PAGE_SIZE)
+      const notices: InboundNotice[] = []
+      // shortcut: one metadata call per message (at most 50 a poll); use a batch call if polling gets hot.
+      for (const id of ids) {
+        const query = new URLSearchParams({ format: 'metadata' })
+        for (const name of ['From', 'Subject', 'Content-Type', 'Auto-Submitted']) {
+          query.append('metadataHeaders', name)
+        }
+        const message = await read(`${root}/${encodeURIComponent(id)}?${query}`)
+        const raw =
+          typeof message === 'object' && message !== null
+            ? ((message as { payload?: { headers?: unknown } }).payload?.headers ?? [])
+            : []
+        const value = (name: string): string => {
+          const found = Array.isArray(raw)
+            ? raw.find((h) => field(h, 'name')?.toLowerCase() === name.toLowerCase())
+            : undefined
+          return field(found, 'value') ?? ''
+        }
+        const kind = classifyInbound(
+          {
+            from: value('From'),
+            subject: value('Subject'),
+            contentType: value('Content-Type'),
+            autoSubmitted: value('Auto-Submitted'),
+          },
+          ownAddress
+        )
+        const millis = Number(field(message, 'internalDate'))
+        if (kind !== null) {
+          notices.push({
+            providerMessageId: id,
+            threadId: field(message, 'threadId') ?? id,
+            kind,
+            receivedAt: new Date(Number.isFinite(millis) ? millis : Date.now()).toISOString(),
+          })
+        }
+      }
+      return notices.sort((a, b) => a.receivedAt.localeCompare(b.receivedAt))
     },
   }
 }

@@ -28,6 +28,10 @@ import { createMemoryAudienceCheckStore } from '~/adapters/memory/audience-check
 import { createMemoryBrandVoiceStore } from '~/adapters/memory/brand-voice-store'
 import { createMemoryCampaignStore } from '~/adapters/memory/campaign-store'
 import { createMemoryCore, type MemoryCore } from '~/adapters/memory/core'
+import {
+  createMemoryCoreSuppression,
+  type MemoryCoreSuppression,
+} from '~/adapters/memory/core-suppression'
 import { createMemoryEnrollmentStore } from '~/adapters/memory/enrollment-store'
 import { createMemoryFitStore } from '~/adapters/memory/fit-store'
 import {
@@ -38,6 +42,7 @@ import {
   createMemoryLinkedinStore,
   type MemoryLinkedinStore,
 } from '~/adapters/memory/linkedin-store'
+import { createMemoryMailEventStore } from '~/adapters/memory/mail-event-store'
 import {
   createMemoryMailTransport,
   type MemoryMailTransport,
@@ -64,6 +69,7 @@ import {
   type LinkedinChannelDisabled,
 } from '~/modules/linkedin/deps'
 import type { MailboxStateChanged } from '~/modules/mailbox/deps'
+import type { MailEvent } from '~/modules/mailevent/deps'
 import type { SignalDeps, SignalEvent } from '~/modules/signal/deps'
 
 /** The issuer and audience the test environment's tokens carry. */
@@ -96,6 +102,12 @@ export type TestDeps = Container & {
   linkedinStore: MemoryLinkedinStore
   /** Every `mailbox.state_changed` published, in order. */
   mailEvents: { organizationId: string; event: MailboxStateChanged }[]
+  /** The mail event module's deps: provider notifications and the unsubscribe page. */
+  inboundMail: Container['inboundMail']
+  /** The suppression stand-in for core: what bounces, complaints and unsubscribes suppressed. */
+  suppression: MemoryCoreSuppression
+  /** Every `mail.*` event published, in order. */
+  inboundEvents: { organizationId: string; event: MailEvent }[]
   /** Every `signal.recorded` and `prospect.fit_changed` published, in order. */
   signalEvents: { organizationId: string; event: SignalEvent }[]
   /** The `linkedin.channel_disabled` events published, in order. */
@@ -259,6 +271,23 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     organizationDailyCap: env.MAIL_ORG_DAILY_CAP,
   }
 
+  const suppression = createMemoryCoreSuppression()
+  const inboundEvents: TestDeps['inboundEvents'] = []
+  const inboundMail: Container['inboundMail'] = {
+    mailboxes,
+    sends: send.store,
+    enrollments: campaigns.enrollments,
+    log: createMemoryMailEventStore(),
+    prospects: core.prospects,
+    suppression,
+    clock: time.clock,
+    logger,
+    secret: env.MAIL_STATE_SECRET,
+    publish: async (organizationId, event) => {
+      inboundEvents.push({ organizationId, event })
+    },
+  }
+
   const linkedinEvents: TestDeps['linkedinEvents'] = []
   const linkedinPaused: TestDeps['linkedinPaused'] = []
   const linkedinProvider = createMemoryLinkedInProvider(time.clock)
@@ -305,6 +334,9 @@ export function createTestDeps(overrides: TestDepsOverrides = {}): TestDeps {
     mail,
     outlookMail,
     mailEvents,
+    inboundMail,
+    suppression,
+    inboundEvents,
     linkedinEvents,
     linkedinPaused,
     core,

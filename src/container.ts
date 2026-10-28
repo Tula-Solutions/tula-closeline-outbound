@@ -24,8 +24,10 @@ import { createSecretBoxVault } from '~/adapters/crypto/vault'
 import { createGmailMailTransport } from '~/adapters/gmail/mail-transport'
 import { createGraphMailTransport } from '~/adapters/graph/mail-transport'
 import { createHttpCoreProspects } from '~/adapters/http/core'
+import { createHttpCoreSuppression } from '~/adapters/http/core-suppression'
 import { createMemoryAudienceCheckStore } from '~/adapters/memory/audience-check-store'
 import { createMemoryCore } from '~/adapters/memory/core'
+import { createMemoryCoreSuppression } from '~/adapters/memory/core-suppression'
 import { createMemoryLinkedInProvider } from '~/adapters/memory/linkedin-provider'
 import { createMemoryMailTransport } from '~/adapters/memory/mail-transport'
 import { createMemorySecretBox } from '~/adapters/memory/secret-box'
@@ -34,6 +36,7 @@ import { createPostgresCampaignStore } from '~/adapters/postgres/campaign-store'
 import { createPostgresEnrollmentStore } from '~/adapters/postgres/enrollment-store'
 import { createPostgresFitStore } from '~/adapters/postgres/fit-store'
 import { createPostgresLinkedinStore } from '~/adapters/postgres/linkedin-store'
+import { createPostgresMailEventStore } from '~/adapters/postgres/mail-event-store'
 import { createPostgresMailboxStore } from '~/adapters/postgres/mailbox-store'
 import { createPostgresProviderConfig } from '~/adapters/postgres/provider-config'
 import { createPostgresSendStore } from '~/adapters/postgres/send-store'
@@ -55,6 +58,7 @@ import { enrichmentHandlers } from '~/modules/enrichment/handlers'
 import type { FitDeps } from '~/modules/fit/deps'
 import { defaultSendSettings, type LinkedinDeps } from '~/modules/linkedin/deps'
 import type { MailboxDeps } from '~/modules/mailbox/deps'
+import type { MailEventDeps } from '~/modules/mailevent/deps'
 import type { SendDeps } from '~/modules/send/deps'
 import type { SignalDeps } from '~/modules/signal/deps'
 import { trackerSafe } from '~/tracker-safe'
@@ -102,6 +106,8 @@ export type Container = {
   mailboxes: MailboxDeps
   /** Everything the signal module needs; its service functions take this first. */
   signals: SignalDeps
+  /** Everything the mail event module needs: provider notifications and the unsubscribe page. */
+  inboundMail: MailEventDeps
   /** Everything the fit module needs; its service functions take this first. */
   fit: FitDeps
   /** Everything the send pipeline needs. */
@@ -384,6 +390,32 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     unsubscribe: { secret: env.MAIL_STATE_SECRET, url: env.MAIL_UNSUBSCRIBE_URL },
     organizationDailyCap: env.MAIL_ORG_DAILY_CAP,
   }
+  const suppressionHttp =
+    coreHttp === undefined
+      ? undefined
+      : createHttpCoreSuppression({
+          baseUrl: env.CORE_URL as string,
+          secret: env.CORE_INTERNAL_SECRET as string,
+          environment: env.ENVIRONMENT,
+          timeoutMs: env.CORE_CALL_TIMEOUT_MS,
+          maxAttempts: env.CORE_CALL_MAX_TRIES,
+          logger,
+        })
+  const inboundMail: MailEventDeps = {
+    mailboxes,
+    sends: send.store,
+    enrollments: campaigns.enrollments,
+    log: createPostgresMailEventStore(inOrganization),
+    prospects: prospectsCore,
+    suppression: suppressionHttp ?? createMemoryCoreSuppression(),
+    clock: systemClock,
+    logger,
+    secret: env.MAIL_STATE_SECRET,
+    // There is no event bus in this service yet; the event is logged (ids only) until one exists.
+    publish: async (organizationId, event) => {
+      logger.info(event.name, { organizationId, ...event.payload })
+    },
+  }
   const consumer = createOutboundConsumer({
     queue,
     store: processed,
@@ -411,6 +443,7 @@ export function createContainer(env: Env = loadEnv(), options: ContainerOptions 
     brandVoice,
     mailboxes,
     signals,
+    inboundMail,
     fit,
     send,
     linkedin,

@@ -126,6 +126,29 @@ export function describeMailboxStore(label: string, make: () => MailboxStore): v
       ).toBeNull()
     })
 
+    test('pause stops a sending Mailbox once, and the sync time is kept', async () => {
+      const store = make()
+      const o = org()
+      const record = newMailboxRecord()
+      await store.connect(o, record, newStoredTokens())
+      const first = await store.pause(o, record.id, 'complaint_spike', '2026-01-02T00:00:00.000Z')
+      expect(first).toMatchObject({ changed: true, before: 'warming' })
+      expect(first?.record).toMatchObject({ state: 'paused', stateReason: 'complaint_spike' })
+      const again = await store.pause(o, record.id, 'bounce_spike', '2026-01-03T00:00:00.000Z')
+      expect(again?.changed).toBe(false)
+      expect(again?.record.stateReason).toBe('complaint_spike')
+      await store.markSynced(o, record.id, '2026-01-04T00:00:00.000Z')
+      expect((await store.find(o, record.id))?.lastSyncedAt).toBe('2026-01-04T00:00:00.000Z')
+      expect(
+        await store.pause(
+          o,
+          formatId('mbx', crypto.randomUUID()) as MailboxId,
+          'complaint_spike',
+          '2026-01-03T00:00:00.000Z'
+        )
+      ).toBeNull()
+    })
+
     test('tokens are never written back to a disconnected Mailbox', async () => {
       const store = make()
       const o = org()

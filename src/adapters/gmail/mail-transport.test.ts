@@ -317,3 +317,44 @@ describe.skipIf(process.env.GMAIL_LIVE_REFRESH_TOKEN === undefined)('gmail live 
     expect(refreshed.accessToken.length).toBeGreaterThan(0)
   })
 })
+
+describe('Gmail fetchInbound', () => {
+  test('reads headers only and classifies a reply and a bounce', async () => {
+    const urls: string[] = []
+    const transport = createGmailMailTransport({
+      ...BASE,
+      fetch: async (input) => {
+        urls.push(input)
+        if (input.includes('m-reply')) {
+          return json('message-reply.json')
+        }
+        if (input.includes('m-bounce')) {
+          return json('message-bounce.json')
+        }
+        return json('inbox-list.json')
+      },
+      sleep: async () => undefined,
+    })
+    const notices = await transport.fetchInbound('token', {
+      since: '2026-10-01T00:00:00.000Z',
+      ownAddress: 'rep@us.test',
+    })
+    expect(notices.map((n) => [n.providerMessageId, n.threadId, n.kind])).toEqual([
+      ['m-reply', 't-1', 'reply'],
+      ['m-bounce', 't-2', 'hard_bounce'],
+    ])
+    expect(urls.some((u) => u.includes('format=metadata'))).toBe(true)
+    expect(urls.every((u) => !u.includes('format=full') && !u.includes('format=raw'))).toBe(true)
+  })
+
+  test('a rejected token is token_expired', async () => {
+    const transport = createGmailMailTransport({
+      ...BASE,
+      fetch: async () => json('unauthenticated.json', 401),
+      sleep: async () => undefined,
+    })
+    await expect(
+      transport.fetchInbound('token', { since: '2026-10-01T00:00:00.000Z', ownAddress: 'a@b.test' })
+    ).rejects.toMatchObject({ failure: 'token_expired' })
+  })
+})

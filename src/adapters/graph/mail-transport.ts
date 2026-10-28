@@ -1,8 +1,10 @@
 import { buildRfc822 } from '~/adapters/gmail/mail-transport'
+import { classifyInbound, INBOUND_PAGE_SIZE } from '~/adapters/inbound-classify'
 import { createProviderCall } from '~/adapters/provider-call'
 import {
   type ConnectedAccount,
   type GrantTokens,
+  type InboundNotice,
   type MailTransport,
   MailTransportError,
   type SentMessage,
@@ -248,6 +250,62 @@ export function createGraphMailTransport(options: GraphMailTransportOptions): Ma
         )
       }
       return { providerMessageId: id, threadId: field(draft.body, 'conversationId') ?? id }
+    },
+
+    async fetchInbound(accessToken, { since, ownAddress }) {
+      const query = new URLSearchParams({
+        $filter: `receivedDateTime ge ${new Date(since).toISOString()}`,
+        $orderby: 'receivedDateTime asc',
+        $top: String(INBOUND_PAGE_SIZE),
+        $select: 'id,conversationId,receivedDateTime,subject,from,internetMessageHeaders',
+      })
+      const { status, body } = await call(
+        `${api}/me/mailFolders/inbox/messages?${query}`,
+        { method: 'GET', headers: bearer(accessToken) },
+        retryAlways
+      )
+      if (status === 401) {
+        throw new MailTransportError('token_expired', status)
+      }
+      const items = (body as { value?: unknown } | null)?.value
+      if (status !== 200 || !Array.isArray(items)) {
+        throw new MailTransportError('rejected', status)
+      }
+      const notices: InboundNotice[] = []
+      for (const item of items.slice(0, INBOUND_PAGE_SIZE)) {
+        const id = field(item, 'id')
+        const received = field(item, 'receivedDateTime')
+        if (id === undefined || received === undefined) {
+          continue
+        }
+        const raw = (item as { internetMessageHeaders?: unknown }).internetMessageHeaders
+        const header = (name: string): string => {
+          const found = Array.isArray(raw)
+            ? raw.find((h) => field(h, 'name')?.toLowerCase() === name.toLowerCase())
+            : undefined
+          return field(found, 'value') ?? ''
+        }
+        const address = (item as { from?: { emailAddress?: { address?: unknown } } }).from
+          ?.emailAddress?.address
+        const kind = classifyInbound(
+          {
+            from: typeof address === 'string' ? address : header('From'),
+            subject: field(item, 'subject') ?? '',
+            contentType: header('Content-Type'),
+            autoSubmitted: header('Auto-Submitted'),
+          },
+          ownAddress
+        )
+        if (kind !== null) {
+          notices.push({
+            providerMessageId: id,
+            threadId: field(item, 'conversationId') ?? id,
+            kind,
+            receivedAt: new Date(received).toISOString(),
+          })
+        }
+      }
+      return notices
     },
   }
 }

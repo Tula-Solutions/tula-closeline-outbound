@@ -322,6 +322,40 @@ export function createPostgresMailboxStore(inOrganization: InOrganization): Mail
         return { record, changed: true }
       }),
 
+    pause: (organizationId, id, reason, at) =>
+      inOrganization(organizationId, async (tx) => {
+        await tx
+          .select({ id: mailboxes.id })
+          .from(mailboxes)
+          .where(and(eq(mailboxes.organizationId, organizationId), eq(mailboxes.id, id)))
+          .for('update')
+        const current = await loadRecord(tx, organizationId, id)
+        if (current === null) {
+          return null
+        }
+        if (current.state === 'paused' || current.state === 'disconnected') {
+          return { record: current, before: current.state, changed: false }
+        }
+        const when = new Date(at)
+        await tx
+          .update(mailboxes)
+          .set({ state: 'paused', stateReason: reason, stateChangedAt: when, updatedAt: when })
+          .where(and(eq(mailboxes.organizationId, organizationId), eq(mailboxes.id, id)))
+        const record = await loadRecord(tx, organizationId, id)
+        if (record === null) {
+          throw new Error('mailbox vanished inside its own transaction')
+        }
+        return { record, before: current.state, changed: true }
+      }),
+
+    markSynced: (organizationId, id, at) =>
+      inOrganization(organizationId, async (tx) => {
+        await tx
+          .update(mailboxes)
+          .set({ lastSyncedAt: new Date(at) })
+          .where(and(eq(mailboxes.organizationId, organizationId), eq(mailboxes.id, id)))
+      }),
+
     registerAttempt: (organizationId, attempt) =>
       inOrganization(organizationId, async (tx) => {
         await tx

@@ -3,6 +3,7 @@ import type { MailboxProvider } from 'tula-closeline-contract'
 import type { Clock } from 'tula-closeline-kit'
 import {
   type ConnectedAccount,
+  type InboundNotice,
   type MailTransport,
   MailTransportError,
   type OutgoingMessage,
@@ -22,6 +23,8 @@ export type MemoryMailTransport = MailTransport & {
   rotateRefreshTokens(on: boolean): void
   /** The next `times` provider calls fail as unavailable. */
   failProvider(times: number): void
+  /** The provider receives an inbound message (a reply, bounce or complaint) in the inbox. */
+  receive(notice: InboundNotice): void
   /** Messages the provider accepted, oldest first. */
   accepted(): readonly OutgoingMessage[]
   /** Grants that were revoked at the provider by `revoke`, as refresh tokens, for a test to assert. */
@@ -51,6 +54,7 @@ export function createMemoryMailTransport(
   const grants = new Map<string, Grant>()
   const accessTokens = new Map<string, { refreshToken: string; expiresAt: number }>()
   const accepted: OutgoingMessage[] = []
+  const inbox: InboundNotice[] = []
   const revokedByUs: string[] = []
   let failures = 0
   let accounts = 0
@@ -96,6 +100,9 @@ export function createMemoryMailTransport(
     },
     failProvider(times) {
       failures = times
+    },
+    receive: (notice) => {
+      inbox.push(notice)
     },
     accepted: () => accepted,
     revokedByUs: () => revokedByUs,
@@ -170,6 +177,15 @@ export function createMemoryMailTransport(
       accepted.push(message)
       const id = randomUUID().replaceAll('-', '').slice(0, 16)
       return { providerMessageId: id, threadId: message.threadId ?? id }
+    },
+
+    async fetchInbound(accessToken, { since }) {
+      guard()
+      const token = accessTokens.get(accessToken)
+      if (token === undefined || token.expiresAt <= options.clock.now().getTime()) {
+        throw new MailTransportError('token_expired', 401)
+      }
+      return inbox.filter((n) => n.receivedAt >= since).slice(0, 50)
     },
   }
 }
