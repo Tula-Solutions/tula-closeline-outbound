@@ -116,7 +116,10 @@ async function compose(
           research.playbook!.search(organizationId, { query, limit: MAX_PLAYBOOK, signal })
         )
           .then((r) => (r === 'timeout' ? [] : r.slice(0, MAX_PLAYBOOK)))
-          .catch(() => [])
+          .catch(() => {
+            deps.logger.warn('draft.playbook_unavailable', { organizationId })
+            return []
+          })
 
   const citable: Source[] = []
   const add = (source: Omit<Source, 'id'>) => {
@@ -189,8 +192,10 @@ async function compose(
     const source = claim.success ? byId.get(claim.data.sourceId) : undefined
     if (source?.cite == null) {
       unresolved++
-    } else if (cited.size < MAX_DRAFT_CITATIONS) {
+    } else if (cited.has(JSON.stringify(source.cite)) || cited.size < MAX_DRAFT_CITATIONS) {
       cited.set(JSON.stringify(source.cite), source)
+    } else {
+      unresolved++ // over the Citation cap: flagged, never silently dropped
     }
   }
   const citations = [...cited.values()].map((source) => ({
